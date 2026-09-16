@@ -4,11 +4,11 @@
 
 ### Essential .NET observability in a self-hosted Blazor interface.
 
-Collect, correlate, and explore your OpenTelemetry **logs**, **traces**, and **metrics** without operating a full distributed observability stack.
+Collect, correlate, and explore your OpenTelemetry **logs**, **traces**, and **metrics** over OTLP gRPC or HTTP/protobuf without operating a full distributed observability stack.
 
 [![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Blazor](https://img.shields.io/badge/Blazor-Server%20%2F%20SSR-5C2D91?logo=blazor&logoColor=white)](https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor)
-[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-OTLP%20HTTP%2Fprotobuf-4F62AD?logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
+[![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-OTLP%20gRPC%20%2B%20HTTP%2Fprotobuf-4F62AD?logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
 [![SQLite](https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
 [![Docker](https://img.shields.io/badge/Deployment-Docker-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
@@ -108,12 +108,12 @@ The telemetry database and ASP.NET Core Data Protection keys are persisted in th
 
 ## Connect a .NET application
 
-Configure your OpenTelemetry exporter to use OTLP HTTP/protobuf:
+Configure your OpenTelemetry exporter to use OTLP gRPC, which is enabled by default on port `4317`:
 
 ```dotenv
 OTEL_SERVICE_NAME=my-service
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
-OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
 Example ASP.NET Core configuration:
@@ -144,6 +144,8 @@ builder.Logging.AddOpenTelemetry(logging =>
     logging.AddOtlpExporter();
 });
 ```
+
+OTLP HTTP/protobuf remains available on the web endpoint through `/v1/logs`, `/v1/traces`, and `/v1/metrics`.
 
 Ingestion key validation is disabled by default, so no authentication header is required. In this mode, restrict access to the OTLP endpoints at the network or reverse-proxy layer, for example with an IP allowlist.
 

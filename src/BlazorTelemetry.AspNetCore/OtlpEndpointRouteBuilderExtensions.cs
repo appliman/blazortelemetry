@@ -13,6 +13,9 @@ public static class OtlpEndpointRouteBuilderExtensions
         endpoints.MapPost("/v1/logs", ReceiveLogs).DisableAntiforgery();
         endpoints.MapPost("/v1/traces", ReceiveTraces).DisableAntiforgery();
         endpoints.MapPost("/v1/metrics", ReceiveMetrics).DisableAntiforgery();
+        endpoints.MapGrpcService<OtlpLogsGrpcService>();
+        endpoints.MapGrpcService<OtlpTracesGrpcService>();
+        endpoints.MapGrpcService<OtlpMetricsGrpcService>();
         endpoints.MapGet("/blazor-telemetry/health", GetHealth).AllowAnonymous();
         return endpoints;
     }

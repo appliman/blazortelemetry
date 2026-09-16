@@ -2,8 +2,8 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 WORKDIR /app
 EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080 \
-    DOTNET_EnableDiagnostics=0 \
+EXPOSE 4317
+ENV DOTNET_EnableDiagnostics=0 \
     TZ=Europe/Paris \
     BlazorTelemetry__ConnectionString="Data Source=/data/telemetry.db;Cache=Shared" \
     DataProtection__KeysPath=/data/keys
