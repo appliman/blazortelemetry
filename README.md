@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 # BlazorTelemetry
 
@@ -16,7 +16,7 @@ Collect, correlate, and explore your OpenTelemetry **logs**, **traces**, and **m
 
 ![BlazorTelemetry operational dashboard](docs/images/dashboard.png)
 
-## Why BlazorTelemetry?
+## Why BlazorTelemetry ?
 
 BlazorTelemetry is designed for small .NET teams that need to understand their applications quickly while keeping the infrastructure simple to operate.
 
