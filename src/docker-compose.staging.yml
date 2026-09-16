@@ -2,7 +2,7 @@
 
 services:
   blazor-telemetry:
-    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazortelemetry:staging}
+    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazor-telemetry:staging}
     container_name: blazor-telemetry-staging
     restart: unless-stopped
     stop_grace_period: 30s

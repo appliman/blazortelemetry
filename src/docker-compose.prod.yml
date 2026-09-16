@@ -2,7 +2,7 @@
 
 services:
   blazor-telemetry:
-    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazortelemetry:latest}
+    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazor-telemetry:latest}
     container_name: blazor-telemetry-prod
     restart: unless-stopped
     stop_grace_period: 30s
