@@ -15,8 +15,6 @@ var twoFactorConfiguration = builder.Configuration
     .GetSection("Blazor2fa")
     .Get<BlazorAuthConfiguration>()
     ?? new BlazorAuthConfiguration();
-twoFactorConfiguration.Issuer = "BlazorTelemetry";
-twoFactorConfiguration.KeyName = "BlazorTelemetry Administrator";
 twoFactorConfiguration.ClaimsFactory = (email, code, _, _) =>
 {
     var normalizedEmail = email.Trim();

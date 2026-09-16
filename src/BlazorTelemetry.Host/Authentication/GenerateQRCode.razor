@@ -21,7 +21,7 @@
 		}
 
 		var authenticator = new TwoFactorAuthenticator();
-		var setupResult = authenticator.GenerateSetupCode(Settings.Issuer, Settings.KeyName, Settings.SecretKey, 300, 300);
+		var setupResult = authenticator.GenerateSetupCode(Settings.Issuer, Settings.ApplicationName, Settings.SecretKey, 300, 300);
 		qrCodeImageUrl = setupResult.QrCodeSetupImageUrl;
 		var url = new Uri(qrCodeImageUrl);
 		qrCodeImageUrl = HttpUtility.ParseQueryString(url.Query).Get("chl")!;
