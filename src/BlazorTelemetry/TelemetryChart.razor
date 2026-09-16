@@ -1,0 +1,48 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+@code {
+    private readonly string _elementId = $"telemetry-chart-{Guid.NewGuid():N}";
+    private IJSObjectReference? _module;
+
+    [Parameter]
+    public IReadOnlyList<string> Labels { get; set; } = [];
+
+    [Parameter]
+    public IReadOnlyList<double> Values { get; set; } = [];
+
+    [Parameter]
+    public string Color { get; set; } = "#76e4b8";
+
+    [Parameter]
+    public string Unit { get; set; } = string.Empty;
+
+    [Parameter]
+    public int Height { get; set; } = 220;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/BlazorTelemetry/telemetry-chart.js");
+        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, Color, Unit);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _module.InvokeVoidAsync("dispose", _elementId);
+            await _module.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser circuit is already gone, so there is no JavaScript resource left to release.
+        }
+    }
+}
+
+<div id="@_elementId" class="telemetry-chart" style="height: @(Height)px" role="img" aria-label="Time series trend"></div>

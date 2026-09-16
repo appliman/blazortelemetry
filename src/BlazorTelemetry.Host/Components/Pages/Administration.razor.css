@@ -1,0 +1,19 @@
+.admin-page { max-width: 1100px; margin: 0 auto; padding: 5rem 1.5rem 3rem; color: #e8edf5; font-family: "IBM Plex Sans", system-ui, sans-serif; }
+header { margin-bottom: 2rem; }
+header a { color: #7dd3fc; text-decoration: none; }
+h1 { margin: .75rem 0 .25rem; font-size: clamp(2rem, 5vw, 3.5rem); letter-spacing: -.04em; }
+header p, small { color: #94a3b8; }
+section { margin-top: 1rem; padding: 1.5rem; border: 1px solid #293548; border-radius: .75rem; background: #111827; }
+h2 { margin: 0 0 1rem; font-size: 1.1rem; }
+.admin-form { display: grid; grid-template-columns: 1fr 1fr 180px auto; gap: .75rem; align-items: end; }
+.key-form { grid-template-columns: 1fr auto; }
+label { display: grid; gap: .35rem; color: #cbd5e1; font-size: .85rem; }
+input, select { width: 100%; min-height: 42px; padding: .55rem .7rem; border: 1px solid #334155; border-radius: .4rem; background: #0b1220; color: #f8fafc; }
+button { min-height: 42px; padding: .55rem .85rem; border: 1px solid #375477; border-radius: .4rem; background: #183451; color: #e0f2fe; cursor: pointer; }
+button:hover { background: #21476c; }
+.danger { border-color: #7f1d1d; background: #451a1a; color: #fecaca; }
+.admin-message, .generated-key { display: block; margin: 1rem 0; padding: .8rem 1rem; border: 1px solid #0e7490; border-radius: .4rem; background: #083344; overflow-wrap: anywhere; }
+.admin-table { display: grid; margin-top: 1rem; border-top: 1px solid #293548; }
+.admin-table [role=row] { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .8rem 0; border-bottom: 1px solid #293548; }
+.admin-table span { display: grid; }
+@media (max-width: 760px) { .admin-form, .key-form { grid-template-columns: 1fr; } .admin-table [role=row] { align-items: stretch; flex-direction: column; } }

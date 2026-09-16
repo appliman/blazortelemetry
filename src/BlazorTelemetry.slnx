@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="BlazorTelemetry.AspNetCore/BlazorTelemetry.AspNetCore.csproj" />
+  <Project Path="BlazorTelemetry.Core/BlazorTelemetry.Core.csproj" />
+  <Project Path="BlazorTelemetry.Demo.Api/BlazorTelemetry.Demo.Api.csproj" />
+  <Project Path="BlazorTelemetry.Demo/BlazorTelemetry.Demo.csproj" />
+  <Project Path="BlazorTelemetry.Host/BlazorTelemetry.Host.csproj" />
+  <Project Path="BlazorTelemetry.Sqlite/BlazorTelemetry.Sqlite.csproj" />
+  <Project Path="BlazorTelemetry.Tests/BlazorTelemetry.Tests.csproj" />
+  <Project Path="BlazorTelemetry/BlazorTelemetry.csproj" />
+</Solution>

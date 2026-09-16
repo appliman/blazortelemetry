@@ -1,0 +1,47 @@
+name: blazor-telemetry-prod
+
+services:
+  blazor-telemetry:
+    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazor-telemetry:latest}
+    container_name: blazor-telemetry-prod
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pull_policy: always
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      DOTNET_RUNNING_IN_CONTAINER: "true"
+      TZ: Europe/Paris
+      BootstrapAdmin__Email: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
+      BootstrapAdmin__Password: ${BLAZOR_TELEMETRY_ADMIN_PASSWORD:?Set BLAZOR_TELEMETRY_ADMIN_PASSWORD}
+      BlazorTelemetry__IngestionKeys__application: ${BLAZOR_TELEMETRY_INGESTION_KEY:?Set BLAZOR_TELEMETRY_INGESTION_KEY}
+    expose:
+      - "8080"
+    volumes:
+      - ${DATA_PATH:-/var/storeroot/blazor-telemetry/prod}:/data
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      - "traefik.http.routers.blazor-telemetry-prod-http.rule=Host(`${DOMAIN:?Set DOMAIN without protocol or path}`)"
+      - "traefik.http.routers.blazor-telemetry-prod-http.entrypoints=web"
+      - "traefik.http.routers.blazor-telemetry-prod-http.middlewares=blazor-telemetry-prod-redirect@docker"
+      - "traefik.http.routers.blazor-telemetry-prod.rule=Host(`${DOMAIN:?Set DOMAIN without protocol or path}`)"
+      - "traefik.http.routers.blazor-telemetry-prod.entrypoints=websecure"
+      - "traefik.http.routers.blazor-telemetry-prod.tls=true"
+      - "traefik.http.routers.blazor-telemetry-prod.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.blazor-telemetry-prod.service=blazor-telemetry-prod"
+      - "traefik.http.middlewares.blazor-telemetry-prod-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.blazor-telemetry-prod-redirect.redirectscheme.permanent=true"
+      - "traefik.http.services.blazor-telemetry-prod.loadbalancer.server.port=8080"
+      - "traefik.http.services.blazor-telemetry-prod.loadbalancer.passhostheader=true"
+      - "traefik.http.services.blazor-telemetry-prod.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.blazor-telemetry-prod.loadbalancer.healthcheck.interval=30s"
+      - "traefik.http.services.blazor-telemetry-prod.loadbalancer.healthcheck.timeout=5s"
+
+networks:
+  traefik:
+    external: true
+    name: traefik-public

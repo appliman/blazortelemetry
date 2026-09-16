@@ -1,0 +1,28 @@
+name: blazor-telemetry-dev
+
+services:
+  blazor-telemetry:
+    image: blazor-telemetry:dev
+    build:
+      context: .
+      dockerfile: BlazorTelemetry.Host/Dockerfile
+      target: final
+    container_name: blazor-telemetry-dev
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://0.0.0.0:8080
+      DOTNET_RUNNING_IN_CONTAINER: "true"
+      TZ: Europe/Paris
+      BootstrapAdmin__Email: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
+      BootstrapAdmin__Password: ${BLAZOR_TELEMETRY_ADMIN_PASSWORD:?Set BLAZOR_TELEMETRY_ADMIN_PASSWORD}
+      BlazorTelemetry__IngestionKeys__application: ${BLAZOR_TELEMETRY_INGESTION_KEY:?Set BLAZOR_TELEMETRY_INGESTION_KEY}
+    volumes:
+      - blazor-telemetry-data:/data
+
+volumes:
+  blazor-telemetry-data:
+    name: blazor-telemetry-dev-data

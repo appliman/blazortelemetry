@@ -1,0 +1,29 @@
+@page "/"
+@rendermode InteractiveServer
+@inject DemoTelemetryService Telemetry
+
+@code {
+    private string? _result;
+    private bool _running;
+
+    private async Task Run(string scenario)
+    {
+        _running = true;
+        _result = await Telemetry.Run(scenario, CancellationToken.None);
+        _running = false;
+    }
+}
+
+<PageTitle>BlazorTelemetry demo</PageTitle>
+<main class="demo-page">
+    <h1>BlazorTelemetry demo</h1>
+    <p>Generate real OpenTelemetry logs, distributed traces, and metrics, then inspect them in the embedded dashboard.</p>
+    <div class="demo-actions">
+        <button disabled="@_running" @onclick='() => Run("success")'>Successful order</button>
+        <button disabled="@_running" @onclick='() => Run("slow")'>Slow order</button>
+        <button disabled="@_running" @onclick='() => Run("remote")'>Distributed call</button>
+        <button class="danger" disabled="@_running" @onclick='() => Run("failure")'>Controlled error</button>
+    </div>
+    @if (_result is not null) { <p class="demo-result" role="status">@_result</p> }
+    <a class="demo-link" href="telemetry">Open embedded dashboard</a>
+</main>

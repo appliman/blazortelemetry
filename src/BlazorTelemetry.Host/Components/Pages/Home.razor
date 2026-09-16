@@ -1,0 +1,6 @@
+@page "/"
+@attribute [Authorize(Policy = "BlazorTelemetryReader")]
+@rendermode InteractiveServer
+
+<PageTitle>BlazorTelemetry</PageTitle>
+<TelemetryDashboard />

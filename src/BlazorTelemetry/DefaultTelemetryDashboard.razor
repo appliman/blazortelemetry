@@ -1,0 +1,188 @@
+@code {
+    [Parameter, EditorRequired]
+    public TelemetrySummary Summary { get; set; } = new(0, 0, 0, 0, 0, 0, null, null, []);
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TelemetryItem> Traces { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TelemetryItem> Logs { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<TelemetryItem> Metrics { get; set; } = [];
+
+    private IReadOnlyList<TelemetryItem> TimedTraces => Traces.Where(item => item.DurationMs.HasValue).OrderBy(item => item.TimestampUtc).ToArray();
+    private IReadOnlyList<ChartPoint> RequestDuration => TimedTraces.TakeLast(40).Select(item => new ChartPoint(item.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), item.DurationMs!.Value)).ToArray();
+    private IReadOnlyList<ChartPoint> ErrorRate => BuildErrorRate();
+    private IReadOnlyList<ChartPoint> CurrentConnections => MetricSeries("connection", "active", "current");
+    private IReadOnlyList<ChartPoint> CurrentRequests => MetricSeries("request", "active", "current");
+    private long TotalRequests => Summary.Traces;
+    private long TotalErrors => Logs.LongCount(IsError) + Traces.LongCount(item => item.StatusCode == 2);
+    private IReadOnlyList<CountEntry> Endpoints => Traces.GroupBy(EndpointName).Select(group => new CountEntry(group.Key, group.LongCount())).OrderByDescending(item => item.Count).Take(10).ToArray();
+    private IReadOnlyList<CountEntry> ErrorEndpoints => Traces.Where(item => item.StatusCode == 2).GroupBy(EndpointName).Select(group => new CountEntry(group.Key, group.LongCount())).Concat(Logs.Where(IsError).GroupBy(EndpointName).Select(group => new CountEntry(group.Key, group.LongCount()))).GroupBy(item => item.Name).Select(group => new CountEntry(group.Key, group.Sum(item => item.Count))).OrderByDescending(item => item.Count).Take(10).ToArray();
+    private ProtocolBreakdown Security => BuildBreakdown("https", "http", IsSecure);
+    private IReadOnlyList<CountEntry> Protocols => BuildProtocols();
+    private double MaxEndpointCount => Math.Max(1, Endpoints.FirstOrDefault()?.Count ?? 1);
+    private double MaxErrorEndpointCount => Math.Max(1, ErrorEndpoints.FirstOrDefault()?.Count ?? 1);
+
+    private IReadOnlyList<ChartPoint> MetricSeries(params string[] terms)
+    {
+        var candidates = Metrics.Where(item => terms.All(term => item.Name.Contains(term, StringComparison.OrdinalIgnoreCase)) && item.NumericValue.HasValue).OrderBy(item => item.TimestampUtc).TakeLast(40).ToArray();
+        if (candidates.Length > 0)
+        {
+            return candidates.Select(item => new ChartPoint(item.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), item.NumericValue!.Value)).ToArray();
+        }
+
+        if (terms.Contains("connection"))
+        {
+            return Summary.Services.Count == 0 ? [] : [new ChartPoint(DateTimeOffset.Now.ToString("HH:mm:ss"), Summary.Services.Count)];
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        return Enumerable.Range(0, 12).Select(index =>
+        {
+            var start = now.AddMinutes(-(11 - index) * 5);
+            var end = start.AddMinutes(5);
+            return new ChartPoint(start.ToLocalTime().ToString("HH:mm"), Traces.Count(item => item.TimestampUtc >= start && item.TimestampUtc < end));
+        }).ToArray();
+    }
+
+    private IReadOnlyList<ChartPoint> BuildErrorRate()
+    {
+        if (Traces.Count == 0) return [];
+        var now = DateTimeOffset.UtcNow;
+        return Enumerable.Range(0, 12).Select(index =>
+        {
+            var start = now.AddMinutes(-(11 - index) * 5);
+            var end = start.AddMinutes(5);
+            var bucket = Traces.Where(item => item.TimestampUtc >= start && item.TimestampUtc < end).ToArray();
+            var value = bucket.Length == 0 ? 0 : bucket.Count(item => item.StatusCode == 2) * 100d / bucket.Length;
+            return new ChartPoint(start.ToLocalTime().ToString("HH:mm"), value);
+        }).ToArray();
+    }
+
+    private static bool IsError(TelemetryItem item) => (item.SeverityNumber ?? 0) >= 17;
+
+    private static string EndpointName(TelemetryItem item)
+    {
+        var route = ReadAttribute(item.AttributesJson, "http.route", "url.path", "http.target", "RequestPath");
+        return string.IsNullOrWhiteSpace(route) ? item.Name : route;
+    }
+
+    private static bool? IsSecure(TelemetryItem item)
+    {
+        var value = ReadAttribute(item.AttributesJson, "url.scheme", "http.scheme", "server.scheme", "url.full");
+        if (value?.StartsWith("https", StringComparison.OrdinalIgnoreCase) == true) return true;
+        if (value?.StartsWith("http", StringComparison.OrdinalIgnoreCase) == true) return false;
+        return null;
+    }
+
+    private ProtocolBreakdown BuildBreakdown(string trueName, string falseName, Func<TelemetryItem, bool?> classifier)
+    {
+        var values = Traces.Select(classifier).Where(value => value.HasValue).Select(value => value!.Value).ToArray();
+        return new ProtocolBreakdown(trueName, values.LongCount(value => value), falseName, values.LongCount(value => !value));
+    }
+
+    private IReadOnlyList<CountEntry> BuildProtocols()
+    {
+        var protocols = Traces.Select(item => ReadAttribute(item.AttributesJson, "network.protocol.version", "http.flavor", "http.protocol"))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => NormalizeProtocol(value!))
+            .GroupBy(value => value)
+            .Select(group => new CountEntry(group.Key, group.LongCount()))
+            .OrderBy(item => item.Name)
+            .ToList();
+        return protocols.Count > 0 ? protocols : [new CountEntry("HTTP/1.0", 0), new CountEntry("HTTP/1.1", 0), new CountEntry("HTTP/2", 0)];
+    }
+
+    private static string NormalizeProtocol(string value) => value.ToLowerInvariant() switch
+    {
+        "1.0" or "http/1.0" => "HTTP/1.0",
+        "1.1" or "http/1.1" => "HTTP/1.1",
+        "2" or "2.0" or "http/2" => "HTTP/2",
+        "3" or "3.0" or "http/3" => "HTTP/3",
+        _ => value.ToUpperInvariant()
+    };
+
+    private static string? ReadAttribute(string json, params string[] names)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            foreach (var name in names)
+            {
+                if (document.RootElement.TryGetProperty(name, out var value)) return value.ToString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return null;
+    }
+
+    private sealed record ChartPoint(string Label, double Value);
+    private sealed record CountEntry(string Name, long Count);
+    private sealed record ProtocolBreakdown(string PrimaryName, long Primary, string SecondaryName, long Secondary);
+}
+
+<section class="bt-default-dashboard" aria-label="Default operational dashboard">
+    <div class="bt-dashboard-primary">
+        <article class="bt-monitor-card bt-large-chart">
+            <header><h2>Request duration</h2><span>last hour</span></header>
+            @if (RequestDuration.Count == 0) { <div class="bt-no-data">No data</div> }
+            else { <TelemetryChart Labels="RequestDuration.Select(point => point.Label).ToArray()" Values="RequestDuration.Select(point => point.Value).ToArray()" Unit="ms" Color="#78a9ff" Height="270" /> }
+        </article>
+        <article class="bt-monitor-card bt-large-chart">
+            <header><h2>Error rate</h2><span>% over 5 minutes</span></header>
+            @if (ErrorRate.Count == 0) { <div class="bt-no-data">No data</div> }
+            else { <TelemetryChart Labels="ErrorRate.Select(point => point.Label).ToArray()" Values="ErrorRate.Select(point => point.Value).ToArray()" Unit="%" Color="#ff7b72" Height="270" /> }
+        </article>
+    </div>
+
+    <div class="bt-dashboard-secondary">
+        <div class="bt-live-charts">
+            <article class="bt-monitor-card bt-live-chart">
+                <header><h2>Active connections</h2><strong>@(CurrentConnections.LastOrDefault()?.Value.ToString("N0") ?? "—")</strong></header>
+                @if (CurrentConnections.Count == 0) { <div class="bt-no-data compact">No data</div> }
+                else { <TelemetryChart Labels="CurrentConnections.Select(point => point.Label).ToArray()" Values="CurrentConnections.Select(point => point.Value).ToArray()" Color="#79d279" Height="205" /> }
+            </article>
+            <article class="bt-monitor-card bt-live-chart">
+                <header><h2>Active requests</h2><strong>@(CurrentRequests.LastOrDefault()?.Value.ToString("N0") ?? "—")</strong></header>
+                @if (CurrentRequests.Count == 0) { <div class="bt-no-data compact">No data</div> }
+                else { <TelemetryChart Labels="CurrentRequests.Select(point => point.Label).ToArray()" Values="CurrentRequests.Select(point => point.Value).ToArray()" Color="#79d279" Height="205" /> }
+            </article>
+        </div>
+
+        <div class="bt-kpi-grid">
+            <article class="bt-kpi-card total"><h2>Total requests</h2><strong>@TotalRequests.ToString("N0")</strong><span>@Summary.Services.Count observed services</span></article>
+            <article class="bt-kpi-card errors"><h2>Unhandled exceptions</h2><strong>@TotalErrors.ToString("N0")</strong><span>over the last hour</span></article>
+            <article class="bt-split-card secured">
+                <h2>Secured requests</h2>
+                <div><section><span>@Security.SecondaryName</span><strong>@Security.Secondary.ToString("N0")</strong></section><section><span>@Security.PrimaryName</span><strong>@Security.Primary.ToString("N0")</strong></section></div>
+            </article>
+            <article class="bt-split-card protocols">
+                <h2>HTTP protocol</h2>
+                <div>@foreach (var protocol in Protocols) { <section><span>@protocol.Name</span><strong>@protocol.Count.ToString("N0")</strong></section> }</div>
+            </article>
+        </div>
+    </div>
+
+    <div class="bt-dashboard-tables">
+        <article class="bt-monitor-card">
+            <header><h2>Top 10 requested endpoints</h2><span>@Endpoints.Count routes</span></header>
+            @if (Endpoints.Count == 0) { <div class="bt-no-data table-empty">No data</div> }
+            else
+            {
+                <div class="bt-ranking"><div class="heading"><span>Endpoint</span><span>Requests</span></div>@foreach (var endpoint in Endpoints) { <div class="row"><code>@endpoint.Name</code><div class="bar"><i style="width: @(endpoint.Count / MaxEndpointCount * 100)%"></i></div><strong>@endpoint.Count</strong></div> }</div>
+            }
+        </article>
+        <article class="bt-monitor-card">
+            <header><h2>Top 10 endpoints with errors</h2><span>@ErrorEndpoints.Count routes</span></header>
+            @if (ErrorEndpoints.Count == 0) { <div class="bt-no-data table-empty">No errors observed</div> }
+            else
+            {
+                <div class="bt-ranking errors"><div class="heading"><span>Endpoint</span><span>Errors</span></div>@foreach (var endpoint in ErrorEndpoints) { <div class="row"><code>@endpoint.Name</code><div class="bar"><i style="width: @(endpoint.Count / MaxErrorEndpointCount * 100)%"></i></div><strong>@endpoint.Count</strong></div> }</div>
+            }
+        </article>
+    </div>
+</section>

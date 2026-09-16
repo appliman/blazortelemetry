@@ -1,0 +1,763 @@
+@implements IAsyncDisposable
+@inject ITelemetryRepository Repository
+@inject BlazorTelemetryOptions Options
+@inject IJSRuntime JS
+
+@code {
+    private static readonly string? _assemblyVersion = typeof(TelemetryDashboard).Assembly.GetName().Version?.ToString(4);
+    private readonly CancellationTokenSource _lifetime = new();
+    private string _activeView = "dashboards";
+    private string _search = string.Empty;
+    private string? _service;
+    private string _logLevel = string.Empty;
+    private bool _paused;
+    private bool _loading = true;
+    private string? _error;
+    private TelemetrySummary _summary = new(0, 0, 0, 0, 0, 0, null, null, []);
+    private TelemetryPage _page = new([], 0, false);
+    private IReadOnlyList<AlertRule> _rules = [];
+    private IReadOnlyList<Incident> _incidents = [];
+    private IReadOnlyList<DashboardDefinition> _dashboards = [];
+    private AlertRule _newRule = CreateRule();
+    private string? _selectedTraceId;
+    private string? _selectedMetric;
+    private TelemetryItem? _selectedLog;
+    private TelemetryItem? _selectedSpan;
+    private readonly HashSet<long> _collapsedSpans = [];
+    private ElementReference _spanCloseButton;
+    private ElementReference _spanContent;
+    private bool _focusSpanDrawer;
+    private long? _restoreSpanId;
+    private ElementReference _logCloseButton;
+    private ElementReference _logTraceButton;
+    private bool _focusLogDrawer;
+    private long? _restoreLogId;
+    private IJSObjectReference? _dashboardModule;
+    private IReadOnlyList<MetricSeriesPoint> _series = [];
+    private IReadOnlyList<TelemetryItem> _dashboardTraces = [];
+    private IReadOnlyList<TelemetryItem> _dashboardLogs = [];
+    private IReadOnlyList<TelemetryItem> _dashboardMetrics = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Refresh();
+        _ = RefreshLoop(_lifetime.Token);
+    }
+
+    private async Task RefreshLoop(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (!_paused)
+                {
+                    await InvokeAsync(Refresh);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task Refresh()
+    {
+        try
+        {
+            _error = null;
+            var fromUtc = DateTimeOffset.UtcNow.AddHours(-1);
+            _summary = await Repository.GetSummary(fromUtc, _lifetime.Token);
+            if (_activeView is "logs" or "traces" or "metrics")
+            {
+                var kind = _activeView switch
+                {
+                    "logs" => TelemetryKind.Log,
+                    "traces" => TelemetryKind.Trace,
+                    _ => TelemetryKind.Metric
+                };
+                var (minimumSeverityNumber, maximumSeverityNumber) = _activeView == "logs"
+                    ? LogSeverityRange(_logLevel)
+                    : (null, null);
+                _page = await Repository.Query(new TelemetryQuery(
+                    kind,
+                    _service,
+                    _search,
+                    _selectedTraceId,
+                    fromUtc,
+                    Take: 200,
+                    MinimumSeverityNumber: minimumSeverityNumber,
+                    MaximumSeverityNumber: maximumSeverityNumber), _lifetime.Token);
+                if (_activeView == "metrics")
+                {
+                    _selectedMetric ??= _page.Items.FirstOrDefault()?.Name;
+                    if (_selectedMetric is not null)
+                    {
+                        _series = await Repository.GetMetricSeries(_selectedMetric, _service, fromUtc, _lifetime.Token);
+                    }
+                }
+            }
+            else if (_activeView == "alerts")
+            {
+                _rules = await Repository.GetAlertRules(_lifetime.Token);
+                _incidents = await Repository.GetIncidents(true, _lifetime.Token);
+            }
+            else if (_activeView == "dashboards")
+            {
+                var dashboardsTask = Repository.GetDashboards(_lifetime.Token);
+                var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
+                var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
+                var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
+                await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask);
+                _dashboards = await dashboardsTask;
+                _dashboardTraces = (await tracesTask).Items;
+                _dashboardLogs = (await logsTask).Items;
+                _dashboardMetrics = (await metricsTask).Items;
+            }
+        }
+        catch (Exception exception)
+        {
+            _error = $"Data is unavailable: {exception.Message}";
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectView(string view)
+    {
+        _activeView = view;
+        _selectedTraceId = null;
+        _selectedLog = null;
+        _selectedSpan = null;
+        _collapsedSpans.Clear();
+        await Refresh();
+    }
+
+    private void OpenLog(TelemetryItem item)
+    {
+        _selectedLog = item;
+        _focusLogDrawer = true;
+        _restoreLogId = null;
+    }
+
+    private void CloseLog()
+    {
+        _restoreLogId = _selectedLog?.Id;
+        _selectedLog = null;
+    }
+
+    private void HandleLogKey(KeyboardEventArgs args, TelemetryItem item)
+    {
+        if (args.Key is "Enter" or " ")
+        {
+            OpenLog(item);
+        }
+    }
+
+    private void HandleDrawerKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            CloseLog();
+        }
+    }
+
+    private async Task SelectTrace(string? traceId)
+    {
+        if (string.IsNullOrWhiteSpace(traceId))
+        {
+            return;
+        }
+        _selectedLog = null;
+        _restoreLogId = null;
+        _selectedTraceId = traceId;
+        _service = null;
+        _search = string.Empty;
+        _collapsedSpans.Clear();
+        _activeView = "traces";
+        await Refresh();
+    }
+
+    private void OpenSpan(TelemetryItem _item)
+    {
+        _selectedSpan = _item;
+        _focusSpanDrawer = true;
+        _restoreSpanId = null;
+    }
+
+    private void CloseSpan()
+    {
+        _restoreSpanId = _selectedSpan?.Id;
+        _selectedSpan = null;
+    }
+
+    private void HandleSpanDrawerKey(KeyboardEventArgs _args)
+    {
+        if (_args.Key == "Escape")
+        {
+            CloseSpan();
+        }
+    }
+
+    private void ToggleSpan(long _id)
+    {
+        if (!_collapsedSpans.Add(_id))
+        {
+            _collapsedSpans.Remove(_id);
+        }
+    }
+
+    private IEnumerable<(TelemetryItem Item, int Depth, bool HasChildren)> TraceRows(IEnumerable<TelemetryItem> _items)
+    {
+        var _ordered = _items.OrderBy(_item => _item.TimestampUtc).ToArray();
+        var _ids = _ordered.Where(_item => !string.IsNullOrEmpty(_item.SpanId)).Select(_item => _item.SpanId!).ToHashSet();
+        var _children = _ordered.Where(_item => !string.IsNullOrEmpty(_item.ParentSpanId)).ToLookup(_item => _item.ParentSpanId!);
+        var _visited = new HashSet<long>();
+        var _stack = new Stack<(TelemetryItem Item, int Depth, bool Hidden)>();
+        foreach (var _root in _ordered.Where(_item => string.IsNullOrEmpty(_item.ParentSpanId) || !_ids.Contains(_item.ParentSpanId)).Concat(_ordered))
+        {
+            _stack.Push((_root, 0, false));
+            while (_stack.TryPop(out var _entry))
+            {
+                if (!_visited.Add(_entry.Item.Id))
+                {
+                    continue;
+                }
+                var _descendants = _entry.Item.SpanId is { Length: > 0 } _spanId ? _children[_spanId].ToArray() : [];
+                if (!_entry.Hidden)
+                {
+                    yield return (_entry.Item, _entry.Depth, _descendants.Length > 0);
+                }
+                foreach (var _child in _descendants.Reverse())
+                {
+                    _stack.Push((_child, _entry.Depth + 1, _entry.Hidden || _collapsedSpans.Contains(_entry.Item.Id)));
+                }
+            }
+        }
+    }
+
+    private static double SpanDuration(TelemetryItem _item) => _item.DurationMs is double _duration && double.IsFinite(_duration) ? Math.Max(0, _duration) : 0;
+    private static string TraceNumber(double _value) => _value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    private async Task SelectMetric(string name)
+    {
+        _selectedMetric = name;
+        _series = await Repository.GetMetricSeries(name, _service, DateTimeOffset.UtcNow.AddHours(-1), _lifetime.Token);
+    }
+
+    private async Task SaveRule()
+    {
+        await Repository.SaveAlertRule(_newRule, _lifetime.Token);
+        _newRule = CreateRule();
+        await Refresh();
+    }
+
+    private async Task DeleteRule(int id)
+    {
+        await Repository.DeleteAlertRule(id, _lifetime.Token);
+        await Refresh();
+    }
+
+    private async Task Acknowledge(long id)
+    {
+        await Repository.AcknowledgeIncident(id, _lifetime.Token);
+        await Refresh();
+    }
+
+    private async Task CreateDashboard()
+    {
+        var index = _dashboards.Count + 1;
+        await Repository.SaveDashboard(new DashboardDefinition
+        {
+            Name = $"Operations view {index}",
+            DefinitionJson = "[{\"type\":\"metric\",\"title\":\"Load\"},{\"type\":\"logs\",\"title\":\"Recent errors\"}]"
+        }, _lifetime.Token);
+        await Refresh();
+    }
+
+    private static AlertRule CreateRule() => new()
+    {
+        Name = "New rule",
+        Type = AlertRuleType.ErrorLogs,
+        Threshold = 5,
+        WindowMinutes = 5,
+        ConfirmationMinutes = 1,
+        ServiceName = "*"
+    };
+
+    private static string FormatNumber(long value) => value.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("en-US"));
+    private static string FormatTime(DateTimeOffset value) => value.ToLocalTime().ToString("HH:mm:ss.fff");
+    private static string FormatFullTime(DateTimeOffset value) => value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff zzz");
+    private static string FormatUtcTime(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
+    private static string FormatRelativeTime(DateTimeOffset value)
+    {
+        var elapsed = DateTimeOffset.UtcNow - value;
+        if (elapsed < TimeSpan.Zero) return "in the future";
+        if (elapsed.TotalSeconds < 10) return "just now";
+        if (elapsed.TotalMinutes < 1) return $"{(int)elapsed.TotalSeconds} seconds ago";
+        if (elapsed.TotalHours < 1) return $"{(int)elapsed.TotalMinutes} minutes ago";
+        if (elapsed.TotalDays < 1) return $"{(int)elapsed.TotalHours} hours ago";
+        return $"{(int)elapsed.TotalDays} days ago";
+    }
+
+    private static IReadOnlyList<LogDetailEntry> JsonEntries(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return [];
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return [new LogDetailEntry("Value", FormatJsonValue(document.RootElement))];
+            }
+
+            return document.RootElement.EnumerateObject()
+                .Select(property => new LogDetailEntry(property.Name, FormatJsonValue(property.Value)))
+                .ToArray();
+        }
+        catch (JsonException)
+        {
+            return [new LogDetailEntry("Raw value", json)];
+        }
+    }
+
+    private static string FormatJsonValue(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? string.Empty,
+        JsonValueKind.Null => "null",
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Number => value.GetRawText(),
+        _ => JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true })
+    };
+
+    private sealed record LogDetailEntry(string Name, string Value);
+
+    private ValueTask FocusFirstDrawerControl() => _logCloseButton.FocusAsync();
+
+    private ValueTask FocusLastDrawerControl() => !string.IsNullOrWhiteSpace(_selectedLog?.TraceId)
+        ? _logTraceButton.FocusAsync()
+        : _logCloseButton.FocusAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusSpanDrawer)
+        {
+            _focusSpanDrawer = false;
+            await _spanCloseButton.FocusAsync();
+        }
+        else if (_restoreSpanId is long _spanId)
+        {
+            _restoreSpanId = null;
+            _dashboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/BlazorTelemetry/telemetry-chart.js");
+            await _dashboardModule.InvokeVoidAsync("focusById", $"bt-span-row-{_spanId}");
+        }
+        if (_focusLogDrawer)
+        {
+            _focusLogDrawer = false;
+            await _logCloseButton.FocusAsync();
+        }
+        else if (_restoreLogId is long logId)
+        {
+            _restoreLogId = null;
+            _dashboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/BlazorTelemetry/telemetry-chart.js");
+            await _dashboardModule.InvokeVoidAsync("focusById", $"bt-log-row-{logId}");
+        }
+    }
+    private static string ShortId(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value.Length <= 10 ? value : value[..10];
+    private static string SeverityClass(TelemetryItem item) => (item.SeverityNumber ?? 0) >= 17 || item.StatusCode == 2 ? "danger" : (item.SeverityNumber ?? 0) >= 13 ? "warning" : "neutral";
+    private static (int? Minimum, int? Maximum) LogSeverityRange(string level) => level switch
+    {
+        "trace" => (1, 4),
+        "debug" => (5, 8),
+        "information" => (9, 12),
+        "warning" => (13, 16),
+        "error" => (17, 20),
+        "critical" => (21, 24),
+        _ => (null, null)
+    };
+    private string ViewTitle() => _activeView switch { "summary" => "Overview", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboards", "alerts" => "Alert center", _ => "Administration" };
+    private string ViewSubtitle() => _activeView switch { "summary" => "An immediate view of your applications' health", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
+
+    public async ValueTask DisposeAsync()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+        if (_dashboardModule is not null)
+        {
+            await _dashboardModule.DisposeAsync();
+        }
+    }
+}
+
+<section class="bt-shell" aria-label="BlazorTelemetry">
+    <aside class="bt-sidebar">
+        <div class="bt-brand">
+            <span class="bt-brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="bt-brand-text">
+                <span><strong>Blazor</strong>Telemetry</span>
+                <small class="bt-brand-version">@_assemblyVersion</small>
+            </span>
+        </div>
+        <nav aria-label="Telemetry navigation">
+            <button class="@(_activeView == "summary" ? "active" : null)" @onclick='() => SelectView("summary")'><span class="bt-nav-icon" aria-hidden="true">space_dashboard</span>Overview</button>
+            <button class="@(_activeView == "logs" ? "active" : null)" @onclick='() => SelectView("logs")'><span class="bt-nav-icon" aria-hidden="true">description</span>Logs</button>
+            <button class="@(_activeView == "traces" ? "active" : null)" @onclick='() => SelectView("traces")'><span class="bt-nav-icon" aria-hidden="true">account_tree</span>Traces</button>
+            <button class="@(_activeView == "metrics" ? "active" : null)" @onclick='() => SelectView("metrics")'><span class="bt-nav-icon" aria-hidden="true">query_stats</span>Metrics</button>
+            <button class="@(_activeView == "dashboards" ? "active" : null)" @onclick='() => SelectView("dashboards")'><span class="bt-nav-icon" aria-hidden="true">dashboard</span>Dashboards</button>
+            <button class="@(_activeView == "alerts" ? "active" : null)" @onclick='() => SelectView("alerts")'><span class="bt-nav-icon" aria-hidden="true">notifications</span>Alerts @if (_summary.ActiveIncidents > 0) { <b>@_summary.ActiveIncidents</b> }</button>
+            <button class="@(_activeView == "admin" ? "active" : null)" @onclick='() => SelectView("admin")'><span class="bt-nav-icon" aria-hidden="true">admin_panel_settings</span>Administration</button>
+        </nav>
+        <div class="bt-collector-state"><span></span><div><strong>Collector active</strong><small>OTLP · HTTP/protobuf</small></div></div>
+    </aside>
+
+    <main class="bt-main">
+        <header class="bt-toolbar">
+            <div>
+                <h1>@ViewTitle()</h1>
+                <p>@ViewSubtitle()</p>
+                <span class="bt-toolbar-health"><i></i> Collector active <small>OTLP · HTTP/protobuf</small></span>
+            </div>
+            <div class="bt-toolbar-actions">
+                <label class="bt-search"><span class="visually-hidden">Search</span><input @bind="_search" @bind:event="oninput" @onchange="Refresh" placeholder="Search telemetry" /></label>
+                <select @bind="_service" @bind:after="Refresh" aria-label="Filter by service">
+                    <option value="">All services</option>
+                    @foreach (var service in _summary.Services)
+                    {
+                        <option value="@service">@service</option>
+                    }
+                </select>
+                @if (_activeView == "logs")
+                {
+                    <label class="bt-level-filter">
+                        <span>Level</span>
+                        <select @bind="_logLevel" @bind:after="Refresh" aria-label="Filter logs by level">
+                            <option value="">All levels</option>
+                            <option value="trace">Trace</option>
+                            <option value="debug">Debug</option>
+                            <option value="information">Information</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </label>
+                }
+                <button class="bt-live @(_paused ? "paused" : null)" @onclick="() => _paused = !_paused"><span></span>@(_paused ? "Resume" : "Live")</button>
+            </div>
+        </header>
+
+        @if (_error is not null)
+        {
+            <div class="bt-error" role="alert">@_error <button @onclick="Refresh">Retry</button></div>
+        }
+        else if (_loading)
+        {
+            <div class="bt-loading" aria-live="polite"><span></span>Loading signals…</div>
+        }
+        else if (_activeView == "summary")
+        {
+            <div class="bt-stat-strip">
+                <article><small>Logs received</small><strong>@FormatNumber(_summary.Logs)</strong><span>over the last hour</span></article>
+                <article><small>Spans</small><strong>@FormatNumber(_summary.Traces)</strong><span>correlated by trace</span></article>
+                <article><small>Metric points</small><strong>@FormatNumber(_summary.Metrics)</strong><span>all instruments</span></article>
+                <article class="@(_summary.Errors > 0 ? "has-error" : null)"><small>Errors</small><strong>@FormatNumber(_summary.Errors)</strong><span>logs and spans</span></article>
+                <article><small>p95 latency</small><strong>@_summary.P95LatencyMs.ToString("N0")<em> ms</em></strong><span>observed spans</span></article>
+            </div>
+            <div class="bt-summary-grid">
+                <section class="bt-signal-map">
+                    <div class="bt-section-heading"><div><h2>Signal map</h2><p>Activity received over the last hour</p></div><span>@_summary.Services.Count services</span></div>
+                    @if (_summary.Services.Count == 0)
+                    {
+                        <div class="bt-empty"><strong>Waiting for telemetry</strong><p>Configure an OTLP HTTP/protobuf exporter to send data to this server.</p><code>OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080</code></div>
+                    }
+                    else
+                    {
+                        @foreach (var service in _summary.Services)
+                        {
+                            <div class="bt-service-row"><span class="bt-service-pulse"></span><strong>@service</strong><div class="bt-signal-track"><i class="log"></i><i class="trace"></i><i class="metric"></i></div><small>active</small></div>
+                        }
+                    }
+                </section>
+                <aside class="bt-incidents">
+                    <div class="bt-section-heading"><div><h2>Operational status</h2><p>Alerts and available data window</p></div></div>
+                    <dl>
+                        <div><dt>Active incidents</dt><dd class="@(_summary.ActiveIncidents > 0 ? "danger" : null)">@_summary.ActiveIncidents</dd></div>
+                        <div><dt>Oldest data</dt><dd>@(_summary.OldestUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")</dd></div>
+                        <div><dt>Latest data</dt><dd>@(_summary.NewestUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "—")</dd></div>
+                        <div><dt>Raw retention</dt><dd>@Options.RawRetentionDays days</dd></div>
+                    </dl>
+                    <button @onclick='() => SelectView("alerts")'>Open alert center</button>
+                </aside>
+            </div>
+        }
+        else if (_activeView is "logs" or "traces" or "metrics")
+        {
+            <div class="@(_activeView == "metrics" ? "bt-metrics-view" : "bt-signal-view")">
+                @if (_activeView == "metrics" && _selectedMetric is not null)
+                {
+                    <section class="bt-metric-focus">
+                        <div class="bt-section-heading"><div><h2>@_selectedMetric</h2><p>@_series.Count points · last hour</p></div></div>
+                        <TelemetryChart Labels="@_series.Select(point => point.TimestampUtc.ToLocalTime().ToString("HH:mm:ss")).ToList()" Values="@_series.Select(point => point.Value).ToList()" />
+                    </section>
+                }
+                <section class="bt-table-region">
+                <div class="bt-result-count">@_page.Total.ToString("N0") results @if (_page.IsTruncated) { <span>· limited to the 200 most recent</span> }</div>
+                @if (_page.Items.Count == 0)
+                {
+                    <div class="bt-empty"><strong>No signals match this filter</strong><p>Expand the time range or check the exporter configuration.</p></div>
+                }
+                else if (_activeView == "logs")
+                {
+                    <table><thead><tr><th>Time</th><th>Level</th><th>Service</th><th>Message</th><th>Trace</th></tr></thead><tbody>
+                    @foreach (var item in _page.Items)
+                    {
+                        <tr id="bt-log-row-@item.Id" class="bt-log-row @(_selectedLog?.Id == item.Id ? "selected" : null)" tabindex="0" role="button" aria-label="Open log details for @item.Name" @onclick="() => OpenLog(item)" @onkeydown="args => HandleLogKey(args, item)"><td class="mono">@FormatTime(item.TimestampUtc)</td><td><span class="bt-severity @SeverityClass(item)">@(item.SeverityText ?? "INFO")</span></td><td>@item.ServiceName</td><td class="bt-message"><strong>@item.Name</strong><span>@item.Body</span></td><td><span class="bt-trace-cell mono">@ShortId(item.TraceId)</span></td></tr>
+                    }
+                    </tbody></table>
+                }
+                else if (_activeView == "traces")
+                {
+                    <div class="bt-trace-list">
+                    @foreach (var _trace in _page.Items.GroupBy(_item => _item.TraceId ?? $"item-{_item.Id}"))
+                    {
+                        var _start = _trace.Min(_item => _item.TimestampUtc);
+                        var _duration = _trace.Max(_item => (_item.TimestampUtc - _start).TotalMilliseconds + SpanDuration(_item));
+                        var _rows = TraceRows(_trace).ToArray();
+                        <section class="bt-trace-group" @key="_trace.Key" aria-label="Trace @_trace.Key">
+                            <header class="bt-trace-summary">
+                                <strong>Trace <code>@ShortId(_trace.First().TraceId)</code></strong>
+                                <span>@FormatTime(_start)</span><span>Duration <b>@TraceNumber(_duration) ms</b></span>
+                                <span>Resources <b>@_trace.Select(_item => _item.ServiceName).Distinct().Count()</b></span>
+                                <span>Spans <b>@_trace.Count()</b></span>
+                                @if (_selectedTraceId is null && !string.IsNullOrWhiteSpace(_trace.First().TraceId))
+                                {
+                                    <button class="bt-link" @onclick="() => SelectTrace(_trace.First().TraceId)">Focus trace</button>
+                                }
+                            </header>
+                            <div class="bt-trace-scroll">
+                                <div class="bt-trace-columns"><span>Name</span><span>Resource</span><div class="bt-trace-axis">@for (var _tick = 0; _tick <= 4; _tick++) { <span>@TraceNumber(_duration * _tick / 4) ms</span> }</div><span>Duration</span></div>
+                                @foreach (var _row in _rows)
+                                {
+                                    var _item = _row.Item;
+                                    var _offset = (_item.TimestampUtc - _start).TotalMilliseconds;
+                                    <div class="bt-span-line @(_selectedSpan?.Id == _item.Id ? "selected" : null)" @key="_item.Id">
+                                        <button id="bt-span-row-@_item.Id" type="button" class="bt-span-row @SeverityClass(_item)" @onclick="() => OpenSpan(_item)" aria-label="Open span details for @_item.Name">
+                                            <span class="bt-span-name" style="--depth: @Math.Min(_row.Depth, 12)"><span class="bt-nav-icon" aria-hidden="true">@( _row.HasChildren ? "account_tree" : "horizontal_rule")</span><strong title="@_item.Name">@_item.Name</strong></span>
+                                            <span class="bt-span-resource" title="@_item.ServiceName">@_item.ServiceName</span>
+                                            <span class="bt-waterfall-track"><i style="left: @TraceNumber(_offset / Math.Max(.001, _duration) * 100)%; width: @TraceNumber(SpanDuration(_item) / Math.Max(.001, _duration) * 100)%"></i></span>
+                                            <span class="bt-span-duration">@(_item.DurationMs.HasValue ? TraceNumber(SpanDuration(_item)) + " ms" : "—")</span>
+                                        </button>
+                                        @if (_row.HasChildren)
+                                        {
+                                            <button class="bt-span-toggle" type="button" aria-label="Toggle children of @_item.Name" aria-expanded="@(!_collapsedSpans.Contains(_item.Id))" @onclick="() => ToggleSpan(_item.Id)"><span class="bt-nav-icon" aria-hidden="true">@(_collapsedSpans.Contains(_item.Id) ? "chevron_right" : "expand_more")</span></button>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </section>
+                    }
+                    </div>
+                }
+                else
+                {
+                    <table><thead><tr><th>Instrument</th><th>Type</th><th>Service</th><th>Value</th><th>Time</th></tr></thead><tbody>
+                    @foreach (var item in _page.Items)
+                    {
+                        <tr class="@(_selectedMetric == item.Name ? "selected" : null)" @onclick="() => SelectMetric(item.Name)"><td><strong>@item.Name</strong><small>@item.Body</small></td><td><span class="bt-type">@item.MetricType</span></td><td>@item.ServiceName</td><td class="mono value">@(item.NumericValue?.ToString("N3") ?? "—") @item.Unit</td><td class="mono">@FormatTime(item.TimestampUtc)</td></tr>
+                    }
+                    </tbody></table>
+                }
+                </section>
+            </div>
+        }
+        else if (_activeView == "alerts")
+        {
+            <div class="bt-alert-layout">
+                <section>
+                    <div class="bt-section-heading"><div><h2>Incidents</h2><p>Full lifecycle: firing, acknowledgement, and resolution</p></div></div>
+                    @if (_incidents.Count == 0) { <div class="bt-empty compact"><strong>No incidents</strong><p>Active rules are evaluated every @Options.EvaluationIntervalSeconds seconds.</p></div> }
+                    @foreach (var incident in _incidents)
+                    {
+                        <article class="bt-incident @incident.State.ToString().ToLowerInvariant()"><div><span>@incident.Severity</span><h3>@incident.RuleName</h3><p>@incident.ServiceName · value @incident.ObservedValue.ToString("N2") / threshold @incident.Threshold.ToString("N2")</p></div><div><strong>@incident.State</strong><time>@incident.StartedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</time>@if (!incident.AcknowledgedUtc.HasValue && incident.State != IncidentState.Resolved) { <button @onclick="() => Acknowledge(incident.Id)">Acknowledge</button> }</div></article>
+                    }
+                </section>
+                <section>
+                    <div class="bt-section-heading"><div><h2>Rules</h2><p>@_rules.Count configured rules</p></div></div>
+                    @foreach (var rule in _rules)
+                    {
+                        <article class="bt-rule"><div><strong>@rule.Name</strong><span>@rule.Type · threshold @rule.Threshold · @rule.WindowMinutes min</span></div><button title="Delete rule" @onclick="() => DeleteRule(rule.Id)">Delete</button></article>
+                    }
+                    <AuthorizeView Policy="@Options.AdministratorPolicy" Context="authorizationContext">
+                        <EditForm Model="_newRule" OnValidSubmit="SaveRule" class="bt-rule-form">
+                            <h3>New rule</h3>
+                            <div class="form-floating"><InputText class="form-control" @bind-Value="_newRule.Name" placeholder="Name" /><label>Rule name</label></div>
+                            <div class="form-floating"><InputSelect class="form-select" @bind-Value="_newRule.Type"><option value="@AlertRuleType.ErrorLogs">Error count</option><option value="@AlertRuleType.TraceErrorRate">Error rate</option><option value="@AlertRuleType.TraceLatency">p95 latency</option><option value="@AlertRuleType.MetricThreshold">Metric threshold</option><option value="@AlertRuleType.TelemetryAbsence">Telemetry absence</option></InputSelect><label>Monitored signal</label></div>
+                            <div class="bt-form-row"><div class="form-floating"><InputNumber class="form-control" @bind-Value="_newRule.Threshold" placeholder="Threshold" /><label>Threshold</label></div><div class="form-floating"><InputNumber class="form-control" @bind-Value="_newRule.WindowMinutes" placeholder="Window" /><label>Window (min)</label></div></div>
+                            <div class="bt-checks"><label><InputCheckbox @bind-Value="_newRule.NotifyWebhook" /> Webhook</label><label><InputCheckbox @bind-Value="_newRule.NotifyEmail" /> Email</label><label><InputCheckbox @bind-Value="_newRule.NotifyNtfy" /> ntfy</label></div>
+                            <button class="bt-primary" type="submit">Create rule</button>
+                        </EditForm>
+                    </AuthorizeView>
+                </section>
+            </div>
+        }
+        else if (_activeView == "dashboards")
+        {
+            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" />
+            <div class="bt-saved-dashboard-heading"><div><h2>Shared dashboards</h2><p>Additional views saved by the team</p></div><AuthorizeView Policy="@Options.AdministratorPolicy" Context="authorizationContext"><button class="bt-primary" @onclick="CreateDashboard">New dashboard</button></AuthorizeView></div>
+            <div class="bt-dashboard-grid bt-saved-dashboard-grid">
+                @foreach (var dashboard in _dashboards)
+                {
+                    <article><header><h3>@dashboard.Name</h3><time>updated @dashboard.UpdatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</time></header><div class="bt-dashboard-preview"><span></span><span></span><span></span></div><button>Open</button></article>
+                }
+                @if (_dashboards.Count == 0) { <div class="bt-empty compact"><strong>No additional dashboards</strong><p>The operational dashboard above is always available by default.</p></div> }
+            </div>
+        }
+        else
+        {
+            <section class="bt-admin-grid">
+                <article><h2>Collection</h2><dl><div><dt>Protocol</dt><dd>OTLP HTTP/protobuf</dd></div><div><dt>Endpoints</dt><dd><code>/v1/logs · /v1/traces · /v1/metrics</code></dd></div><div><dt>Request limit</dt><dd>@(Options.MaximumRequestBytes / 1024 / 1024) MiB</dd></div></dl></article>
+                <article><h2>Storage</h2><dl><div><dt>Raw retention</dt><dd>@Options.RawRetentionDays days</dd></div><div><dt>Metrics</dt><dd>@Options.MetricRetentionDays days</dd></div><div><dt>SQLite budget</dt><dd>@(Options.MaximumDatabaseBytes / 1024 / 1024 / 1024) GiB</dd></div></dl></article>
+                <article><h2>Security</h2><dl><div><dt>Ingestion key</dt><dd>@(Options.RequireIngestionKey ? "Required" : "Disabled")</dd></div><div><dt>Sensitive attributes</dt><dd>@Options.SensitiveAttributePatterns.Length masked patterns</dd></div><div><dt>Access</dt><dd>Reader / Administrator</dd></div></dl></article>
+            </section>
+        }
+    </main>
+
+    @if (_selectedSpan is { } _span)
+    {
+        <div class="bt-log-backdrop bt-span-backdrop" role="presentation" @onclick="CloseSpan" @onkeydown="HandleSpanDrawerKey">
+            <aside class="bt-log-drawer bt-span-drawer offcanvas offcanvas-end show" role="dialog" aria-modal="true" aria-labelledby="bt-span-title" @onclick:stopPropagation="true">
+                <span class="bt-focus-sentinel" tabindex="0" @onfocus="async _ => await _spanContent.FocusAsync()"></span>
+                <header class="bt-log-drawer-header">
+                    <div><span class="bt-severity @SeverityClass(_span)">@(_span.StatusCode == 2 ? "Error" : _span.StatusCode == 1 ? "OK" : "Unset")</span><h2 id="bt-span-title">@_span.Name</h2><p>Resource @_span.ServiceName · Duration @TraceNumber(SpanDuration(_span)) ms</p></div>
+                    <button @ref="_spanCloseButton" class="bt-drawer-close" type="button" aria-label="Close span details" title="Close (Escape)" @onclick="CloseSpan">×</button>
+                </header>
+                <div @ref="_spanContent" class="bt-log-drawer-content" tabindex="0" role="region" aria-label="Span properties">
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>Span</h3></div>
+                        <dl class="bt-attribute-list">
+                            <div><dt>Span ID</dt><dd><pre>@(_span.SpanId ?? "—")</pre></dd></div>
+                            <div><dt>Trace ID</dt><dd><pre>@(_span.TraceId ?? "—")</pre></dd></div>
+                            <div><dt>Parent span ID</dt><dd><pre>@(_span.ParentSpanId ?? "—")</pre></dd></div>
+                            <div><dt>Name</dt><dd><pre>@_span.Name</pre></dd></div>
+                            <div><dt>Start time</dt><dd><pre>@FormatUtcTime(_span.TimestampUtc)</pre></dd></div>
+                            <div><dt>Duration</dt><dd><pre>@(_span.DurationMs.HasValue ? TraceNumber(SpanDuration(_span)) + " ms" : "—")</pre></dd></div>
+                            @foreach (var _entry in JsonEntries(_span.AttributesJson))
+                            {
+                                <div><dt>@_entry.Name</dt><dd><pre>@_entry.Value</pre></dd></div>
+                            }
+                        </dl>
+                    </section>
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>Resource</h3></div>
+                        <dl class="bt-attribute-list">
+                            <div><dt>Service</dt><dd><pre>@_span.ServiceName</pre></dd></div>
+                            <div><dt>Version</dt><dd><pre>@(_span.ServiceVersion ?? "—")</pre></dd></div>
+                            <div><dt>Environment</dt><dd><pre>@(_span.Environment ?? "—")</pre></dd></div>
+                            @foreach (var _entry in JsonEntries(_span.ResourceAttributesJson))
+                            {
+                                <div><dt>@_entry.Name</dt><dd><pre>@_entry.Value</pre></dd></div>
+                            }
+                        </dl>
+                    </section>
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>Details and events</h3></div>
+                        <dl class="bt-attribute-list">
+                            @foreach (var _entry in JsonEntries(_span.DetailsJson))
+                            {
+                                <div><dt>@_entry.Name</dt><dd><pre>@_entry.Value</pre></dd></div>
+                            }
+                        </dl>
+                        @if (JsonEntries(_span.DetailsJson).Count == 0)
+                        {
+                            <p class="bt-log-no-value">No additional details were provided.</p>
+                        }
+                    </section>
+                </div>
+                <span class="bt-focus-sentinel" tabindex="0" @onfocus="async _ => await _spanCloseButton.FocusAsync()"></span>
+            </aside>
+        </div>
+    }
+
+    @if (_selectedLog is not null)
+    {
+        var log = _selectedLog;
+        <div class="bt-log-backdrop" role="presentation" @onclick="CloseLog" @onkeydown="HandleDrawerKey">
+            <aside class="bt-log-drawer" role="dialog" aria-modal="true" aria-labelledby="bt-log-title" @onclick:stopPropagation="true">
+                <span class="bt-focus-sentinel" tabindex="0" @onfocus="async _ => await FocusLastDrawerControl()"></span>
+                <header class="bt-log-drawer-header">
+                    <div>
+                        <span class="bt-severity @SeverityClass(log)">@(log.SeverityText ?? "INFO")</span>
+                        <span class="bt-log-relative">@FormatRelativeTime(log.TimestampUtc)</span>
+                        <h2 id="bt-log-title">@log.Name</h2>
+                        <p>@log.ServiceName @if (!string.IsNullOrWhiteSpace(log.Environment)) { <span>· @log.Environment</span> }</p>
+                    </div>
+                    <button @ref="_logCloseButton" class="bt-drawer-close" type="button" aria-label="Close details" title="Close (Escape)" @onclick="CloseLog">×</button>
+                </header>
+
+                <div class="bt-log-drawer-content">
+                    <section class="bt-log-meta" aria-label="Timestamp and correlation">
+                        <dl>
+                            <div><dt>Local time</dt><dd class="mono">@FormatFullTime(log.TimestampUtc)</dd></div>
+                            <div><dt>UTC time</dt><dd class="mono">@FormatUtcTime(log.TimestampUtc)</dd></div>
+                            <div><dt>Epoch ms</dt><dd class="mono">@log.TimestampUtc.ToUnixTimeMilliseconds()</dd></div>
+                            <div><dt>Observed</dt><dd class="mono">@FormatUtcTime(log.ObservedUtc)</dd></div>
+                            <div><dt>OTLP level</dt><dd>@(log.SeverityText ?? "—") <span class="mono">#@(log.SeverityNumber?.ToString() ?? "—")</span></dd></div>
+                            <div><dt>Service</dt><dd>@log.ServiceName</dd></div>
+                            <div><dt>Version</dt><dd>@(log.ServiceVersion ?? "—")</dd></div>
+                            <div><dt>Environment</dt><dd>@(log.Environment ?? "—")</dd></div>
+                            <div><dt>Trace ID</dt><dd class="bt-id-value"><code>@(log.TraceId ?? "—")</code>@if (!string.IsNullOrWhiteSpace(log.TraceId)) { <button @ref="_logTraceButton" class="bt-link" @onclick="() => SelectTrace(log.TraceId)">Open trace</button> }</dd></div>
+                            <div><dt>Span ID</dt><dd><code>@(log.SpanId ?? "—")</code></dd></div>
+                        </dl>
+                    </section>
+
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>Raw message</h3><span>@((log.Body ?? string.Empty).Length.ToString("N0")) characters</span></div>
+                        @if (string.IsNullOrEmpty(log.Body))
+                        {
+                            <p class="bt-log-no-value">No body was provided.</p>
+                        }
+                        else
+                        {
+                            <pre class="bt-log-body">@log.Body</pre>
+                        }
+                    </section>
+
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>Log attributes</h3><span>@JsonEntries(log.AttributesJson).Count</span></div>
+                        <dl class="bt-attribute-list">
+                            @foreach (var entry in JsonEntries(log.AttributesJson))
+                            {
+                                <div><dt>@entry.Name</dt><dd><pre>@entry.Value</pre></dd></div>
+                            }
+                        </dl>
+                    </section>
+
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>OpenTelemetry resource</h3><span>@JsonEntries(log.ResourceAttributesJson).Count</span></div>
+                        <dl class="bt-attribute-list">
+                            @foreach (var entry in JsonEntries(log.ResourceAttributesJson))
+                            {
+                                <div><dt>@entry.Name</dt><dd><pre>@entry.Value</pre></dd></div>
+                            }
+                        </dl>
+                    </section>
+
+                    <section class="bt-log-section">
+                        <div class="bt-log-section-title"><h3>Scope and transport</h3><span>@JsonEntries(log.DetailsJson).Count</span></div>
+                        <dl class="bt-attribute-list">
+                            @foreach (var entry in JsonEntries(log.DetailsJson))
+                            {
+                                <div><dt>@entry.Name</dt><dd><pre>@entry.Value</pre></dd></div>
+                            }
+                        </dl>
+                    </section>
+                </div>
+                <span class="bt-focus-sentinel" tabindex="0" @onfocus="async _ => await FocusFirstDrawerControl()"></span>
+            </aside>
+        </div>
+    }
+</section>

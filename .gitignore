@@ -404,6 +404,13 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 **/.ionide/
 
+# BlazorTelemetry local runtime data
+**/Data/*.db
+**/Data/*.db-*
+**/Data/keys/
+.impeccable/
+.playwright-cli/
+
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 

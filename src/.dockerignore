@@ -1,0 +1,7 @@
+**/bin
+**/obj
+**/Data/*.db
+**/Data/*.db-*
+**/Data/keys
+artifacts
+TestResults
