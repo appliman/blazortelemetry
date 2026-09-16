@@ -434,3 +434,4 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+/src/BlazorTelemetry.Host/Data/sidebar-account-validation-keys
