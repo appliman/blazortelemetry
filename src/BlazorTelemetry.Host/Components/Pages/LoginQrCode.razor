@@ -1,0 +1,13 @@
+@page "/login/qr-code"
+@rendermode InteractiveServer
+
+<PageTitle>Set up authentication · BlazorTelemetry</PageTitle>
+<main class="auth-page container py-5">
+    <div class="auth-card mx-auto">
+        <span class="auth-label">TOTP setup</span>
+        <h1>Set up your authenticator</h1>
+        <p>Enter the secret configured in <code>Blazor2fa:SecretKey</code>, then scan the QR code with your authenticator app.</p>
+        <Blazor2fa.GenerateQRCode />
+        <p class="auth-help"><a href="/login">Back to sign in</a></p>
+    </div>
+</main>

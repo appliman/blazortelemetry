@@ -1,42 +1,66 @@
 using BlazorTelemetry.AspNetCore;
 using BlazorTelemetry.Host.Components;
-using BlazorTelemetry.Host.Components.Account;
-using BlazorTelemetry.Host.Data;
-using Microsoft.AspNetCore.Components.Authorization;
+using Blazor2fa;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
-builder.Services.AddScoped<IdentityRedirectManager>();
-builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
+
+var twoFactorConfiguration = builder.Configuration
+    .GetSection("Blazor2fa")
+    .Get<BlazorAuthConfiguration>()
+    ?? new BlazorAuthConfiguration();
+twoFactorConfiguration.Issuer = "BlazorTelemetry";
+twoFactorConfiguration.KeyName = "BlazorTelemetry Administrator";
+twoFactorConfiguration.ClaimsFactory = (email, code, _, _) =>
+{
+    var normalizedEmail = email.Trim();
+    var isAllowed = twoFactorConfiguration.AllowedUserLogins.Contains(
+        normalizedEmail,
+        StringComparer.OrdinalIgnoreCase);
+    var isCodeValid = !string.IsNullOrWhiteSpace(twoFactorConfiguration.SecretKey)
+        && new TwoFactorAuthenticator().ValidateTwoFactorPIN(
+            twoFactorConfiguration.SecretKey,
+            code.Trim());
+    if (!isAllowed || !isCodeValid)
+    {
+        return Task.FromResult<IReadOnlyCollection<Claim>?>(null);
+    }
+
+    IReadOnlyCollection<Claim> claims =
+    [
+        new Claim(ClaimTypes.NameIdentifier, normalizedEmail),
+        new Claim(ClaimTypes.Name, normalizedEmail),
+        new Claim(ClaimTypes.Email, normalizedEmail),
+        new Claim(ClaimTypes.Role, "Administrator")
+    ];
+    return Task.FromResult<IReadOnlyCollection<Claim>?>(claims);
+};
+builder.AddBlazor2fa(twoFactorConfiguration);
+
 builder.Services.AddAuthentication(options =>
     {
-        options.DefaultScheme = IdentityConstants.ApplicationScheme;
-        options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
+        options.DefaultAuthenticateScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
     })
-    .AddIdentityCookies();
-
-var identityConnection = builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=Data/identity.db";
-builder.Services.AddDbContext<ApplicationDbContext>(options => options.UseSqlite(identityConnection));
-builder.Services.AddDatabaseDeveloperPageExceptionFilter();
-builder.Services.AddIdentityCore<ApplicationUser>(options =>
+    .AddCookie(options =>
     {
-        options.SignIn.RequireConfirmedAccount = false;
-        options.Password.RequiredLength = 12;
-        options.Stores.SchemaVersion = IdentitySchemaVersions.Version3;
-    })
-    .AddRoles<IdentityRole>()
-    .AddEntityFrameworkStores<ApplicationDbContext>()
-    .AddSignInManager()
-    .AddDefaultTokenProviders();
-builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
-builder.Services.Configure<BootstrapAdminOptions>(builder.Configuration.GetSection(BootstrapAdminOptions.SECTION_NAME));
-builder.Services.AddHostedService<IdentityBootstrapService>();
+        options.LoginPath = "/login";
+        options.AccessDeniedPath = "/login";
+        options.Cookie.Name = "BlazorTelemetry.Authentication";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = builder.Environment.IsDevelopment()
+            ? CookieSecurePolicy.SameAsRequest
+            : CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Lax;
+        options.ExpireTimeSpan = TimeSpan.FromDays(twoFactorConfiguration.CookieDurationInDays);
+        options.SlidingExpiration = true;
+    });
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("BlazorTelemetryReader", policy => policy.RequireRole("Reader", "Administrator"))
     .AddPolicy("BlazorTelemetryAdministrator", policy => policy.RequireRole("Administrator"));
@@ -53,11 +77,7 @@ if (!string.IsNullOrWhiteSpace(keysPath))
 }
 
 var app = builder.Build();
-if (app.Environment.IsDevelopment())
-{
-    app.UseMigrationsEndPoint();
-}
-else
+if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
@@ -70,12 +90,12 @@ app.UseBlazorTelemetry();
 app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseBlazor2fa();
 app.UseAntiforgery();
 app.MapStaticAssets();
 app.MapHealthChecks("/health/live").AllowAnonymous();
 app.MapBlazorTelemetry();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode().AddAdditionalAssemblies(typeof(BlazorTelemetry.TelemetryDashboard).Assembly);
-app.MapAdditionalIdentityEndpoints();
 app.Run();
 
 public partial class Program;

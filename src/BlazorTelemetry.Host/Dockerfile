@@ -6,7 +6,6 @@ ENV ASPNETCORE_URLS=http://+:8080 \
     DOTNET_EnableDiagnostics=0 \
     TZ=Europe/Paris \
     BlazorTelemetry__ConnectionString="Data Source=/data/telemetry.db;Cache=Shared" \
-    ConnectionStrings__DefaultConnection="Data Source=/data/identity.db;Cache=Shared" \
     DataProtection__KeysPath=/data/keys
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \

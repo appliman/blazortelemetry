@@ -1,0 +1,55 @@
+﻿@using System.Web
+@namespace Blazor2fa
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.AspNetCore.RateLimiting
+@using QRCoder
+
+@inject BlazorAuthConfiguration Settings
+
+@code{
+
+	string? qrCodeImageUrl;
+	string? base64Image;
+	protected string? secretKey = null!;
+
+	[EnableRateLimiting("login")]
+	protected void Generate()
+	{
+		if (!Settings.SecretKey.Equals(secretKey, StringComparison.Ordinal))
+		{
+			return;
+		}
+
+		var authenticator = new TwoFactorAuthenticator();
+		var setupResult = authenticator.GenerateSetupCode(Settings.Issuer, Settings.KeyName, Settings.SecretKey, 300, 300);
+		qrCodeImageUrl = setupResult.QrCodeSetupImageUrl;
+		var url = new Uri(qrCodeImageUrl);
+		qrCodeImageUrl = HttpUtility.ParseQueryString(url.Query).Get("chl")!;
+
+		var qrGenerator = new QRCodeGenerator();
+		var qrCodeData = qrGenerator.CreateQrCode(qrCodeImageUrl, QRCodeGenerator.ECCLevel.Q);
+		var qrCode = new PngByteQRCode(qrCodeData);
+		var qrCodeImage = qrCode.GetGraphic(20);
+
+		base64Image = Convert.ToBase64String(qrCodeImage);
+	}
+}
+
+@if (qrCodeImageUrl is null)
+{
+	<EditForm Model="this" FormName="generateQRCode" OnValidSubmit="Generate">
+		<div class="m-auto">
+			<p class="mb-2">Configured secret</p>
+			<InputText class="form-control" type="password" @bind-Value="@secretKey" autocomplete="off" />
+		</div>
+		<div class="w-100 text-end mt-2">
+			<button type="submit" class="btn btn-primary">Generate QR code</button>
+		</div>
+	</EditForm>
+}
+else
+{
+	<img style="image-rendering: pixelated; max-width: 100%; height: auto;"
+			src="data:image/png;base64,@base64Image"
+			alt="Authenticator setup QR code">
+}

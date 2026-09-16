@@ -4,60 +4,22 @@
 @using System.Security.Cryptography
 @using System.Text
 @using BlazorTelemetry.Core
-@using BlazorTelemetry.Host.Data
-@using Microsoft.AspNetCore.Identity
-@using Microsoft.EntityFrameworkCore
-@inject UserManager<ApplicationUser> UserManager
 @inject ITelemetryRepository Repository
 
 @code {
-    private List<ApplicationUser> _users = [];
     private IReadOnlyList<IngestionApplication> _applications = [];
-    private string _email = string.Empty;
-    private string _password = string.Empty;
-    private string _role = "Reader";
     private string _applicationName = string.Empty;
     private string? _generatedKey;
     private string? _message;
 
-    protected override async Task OnInitializedAsync() => await Reload();
+    protected override async Task OnInitializedAsync()
+    {
+        await Reload();
+    }
 
     private async Task Reload()
     {
-        _users = await UserManager.Users.OrderBy(user => user.Email).ToListAsync();
         _applications = await Repository.GetIngestionApplications(CancellationToken.None);
-    }
-
-    private async Task CreateUser()
-    {
-        _message = null;
-        var user = new ApplicationUser { UserName = _email.Trim(), Email = _email.Trim(), EmailConfirmed = true };
-        var result = await UserManager.CreateAsync(user, _password);
-        if (result.Succeeded)
-        {
-            await UserManager.AddToRoleAsync(user, _role);
-            _email = string.Empty;
-            _password = string.Empty;
-            _message = "Account created.";
-            await Reload();
-            return;
-        }
-
-        _message = string.Join(" ", result.Errors.Select(error => error.Description));
-    }
-
-    private async Task ResetPassword(ApplicationUser user)
-    {
-        if (string.IsNullOrWhiteSpace(_password))
-        {
-            _message = "Enter the new password in the account form.";
-            return;
-        }
-
-        var token = await UserManager.GeneratePasswordResetTokenAsync(user);
-        var result = await UserManager.ResetPasswordAsync(user, token, _password);
-        _message = result.Succeeded ? $"Password reset for {user.Email}." : string.Join(" ", result.Errors.Select(error => error.Description));
-        _password = string.Empty;
     }
 
     private async Task CreateIngestionKey()
@@ -96,31 +58,13 @@
     <header>
         <a href="/">← Dashboard</a>
         <h1>Administration</h1>
-        <p>Local accounts, roles, and ingestion keys.</p>
+        <p>Manage ingestion access keys.</p>
     </header>
 
     @if (_message is not null)
     {
         <div class="admin-message" role="status">@_message</div>
     }
-
-    <section>
-        <h2>Create an account</h2>
-        <div class="admin-form">
-            <label>Email address <input @bind="_email" type="email" autocomplete="off" /></label>
-            <label>Password <input @bind="_password" type="password" autocomplete="new-password" /></label>
-            <label>Role
-                <select @bind="_role"><option>Reader</option><option>Administrator</option></select>
-            </label>
-            <button type="button" @onclick="CreateUser">Create account</button>
-        </div>
-        <div class="admin-table" role="table" aria-label="Accounts">
-            @foreach (var user in _users)
-            {
-                <div role="row"><span role="cell">@user.Email</span><button type="button" @onclick="() => ResetPassword(user)">Reset using the entered password</button></div>
-            }
-        </div>
-    </section>
 
     <section>
         <h2>Ingestion keys</h2>

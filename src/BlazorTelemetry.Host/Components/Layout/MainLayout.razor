@@ -3,9 +3,9 @@
 <div class="host-account">
     <AuthorizeView>
         <Authorized>
-            <a href="Account/Manage">@context.User.Identity?.Name</a>
+            <span>@context.User.Identity?.Name</span>
             <AuthorizeView Policy="BlazorTelemetryAdministrator" Context="adminContext"><a href="administration">Administration</a></AuthorizeView>
-            <form action="Account/Logout" method="post"><AntiforgeryToken /><input type="hidden" name="ReturnUrl" value="" /><button type="submit">Sign out</button></form>
+            <a href="/b2fa/logout">Sign out</a>
         </Authorized>
     </AuthorizeView>
 </div>

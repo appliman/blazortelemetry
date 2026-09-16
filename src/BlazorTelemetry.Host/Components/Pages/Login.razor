@@ -1,0 +1,35 @@
+@page "/login"
+@rendermode InteractiveServer
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    private string SafeReturnUrl => IsLocalUrl(ReturnUrl) ? ReturnUrl! : "/";
+
+    private static bool IsLocalUrl(string? url)
+    {
+        return !string.IsNullOrWhiteSpace(url)
+            && url.StartsWith("/", StringComparison.Ordinal)
+            && !url.StartsWith("//", StringComparison.Ordinal)
+            && !url.StartsWith("/\\", StringComparison.Ordinal);
+    }
+}
+
+<PageTitle>Sign in · BlazorTelemetry</PageTitle>
+<main class="auth-page container py-5">
+    <div class="auth-card mx-auto">
+        <span class="auth-label">Secure access</span>
+        <h1>Sign in</h1>
+        <p>Enter your authorized email address and the current code from your authenticator app.</p>
+        @if (!string.IsNullOrWhiteSpace(Error))
+        {
+            <div class="alert alert-danger" role="alert">The email address or authentication code is invalid.</div>
+        }
+        <Blazor2fa.Login ReturnUrl="@SafeReturnUrl" />
+        <p class="auth-help"><a href="/login/qr-code">Set up an authenticator app</a></p>
+    </div>
+</main>
