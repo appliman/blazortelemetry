@@ -31,6 +31,7 @@ public static class BlazorTelemetryServiceCollectionExtensions
         services.AddSingleton(serviceProvider => serviceProvider.GetRequiredService<IOptions<BlazorTelemetryOptions>>().Value);
         services.AddBlazorTelemetrySqlite(snapshot.ConnectionString);
         services.AddRequestDecompression();
+        services.AddGrpc(options => options.MaxReceiveMessageSize = snapshot.MaximumRequestBytes);
         services.AddSingleton<CollectorCounters>();
         services.AddSingleton<TelemetryIngestionQueue>();
         services.AddSingleton<IngestionKeyAuthorizer>();

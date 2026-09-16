@@ -12,9 +12,9 @@ services:
     stop_grace_period: 30s
     ports:
       - "${HTTP_PORT:-8080}:8080"
+      - "${OTLP_GRPC_PORT:-4317}:4317"
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_URLS: http://0.0.0.0:8080
       DOTNET_RUNNING_IN_CONTAINER: "true"
       TZ: Europe/Paris
       Blazor2fa__AllowedUserLogins__0: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}

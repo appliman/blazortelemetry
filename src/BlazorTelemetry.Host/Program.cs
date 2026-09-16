@@ -15,6 +15,12 @@ var twoFactorConfiguration = builder.Configuration
     .GetSection("Blazor2fa")
     .Get<BlazorAuthConfiguration>()
     ?? new BlazorAuthConfiguration();
+twoFactorConfiguration.Issuer = string.IsNullOrWhiteSpace(twoFactorConfiguration.Issuer)
+    ? "BlazorTelemetry"
+    : twoFactorConfiguration.Issuer.Trim();
+twoFactorConfiguration.ApplicationName = string.IsNullOrWhiteSpace(twoFactorConfiguration.ApplicationName)
+    ? $"{builder.Environment.EnvironmentName} Administrator"
+    : twoFactorConfiguration.ApplicationName.Trim();
 twoFactorConfiguration.ClaimsFactory = (email, code, _, _) =>
 {
     var normalizedEmail = email.Trim();
@@ -75,6 +81,10 @@ if (!string.IsNullOrWhiteSpace(keysPath))
 }
 
 var app = builder.Build();
+app.Logger.LogInformation(
+    "2FA authenticator entry configured as {Issuer}:{ApplicationName}",
+    twoFactorConfiguration.Issuer,
+    twoFactorConfiguration.ApplicationName);
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);

@@ -481,7 +481,7 @@
                     <div class="bt-section-heading"><div><h2>Signal map</h2><p>Activity received over the last hour</p></div><span>@_summary.Services.Count services</span></div>
                     @if (_summary.Services.Count == 0)
                     {
-                        <div class="bt-empty"><strong>Waiting for telemetry</strong><p>Configure an OTLP HTTP/protobuf exporter to send data to this server.</p><code>OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080</code></div>
+                        <div class="bt-empty"><strong>Waiting for telemetry</strong><p>Configure an OTLP gRPC exporter to send data to this server.</p><code>OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317</code></div>
                     }
                     else
                     {
@@ -628,7 +628,7 @@
         else
         {
             <section class="bt-admin-grid">
-                <article><h2>Collection</h2><dl><div><dt>Protocol</dt><dd>OTLP HTTP/protobuf</dd></div><div><dt>Endpoints</dt><dd><code>/v1/logs · /v1/traces · /v1/metrics</code></dd></div><div><dt>Request limit</dt><dd>@(Options.MaximumRequestBytes / 1024 / 1024) MiB</dd></div></dl></article>
+                <article><h2>Collection</h2><dl><div><dt>Protocol</dt><dd>OTLP gRPC · HTTP/protobuf</dd></div><div><dt>Endpoints</dt><dd><code>:4317 · /v1/logs · /v1/traces · /v1/metrics</code></dd></div><div><dt>Request limit</dt><dd>@(Options.MaximumRequestBytes / 1024 / 1024) MiB</dd></div></dl></article>
                 <article><h2>Storage</h2><dl><div><dt>Raw retention</dt><dd>@Options.RawRetentionDays days</dd></div><div><dt>Metrics</dt><dd>@Options.MetricRetentionDays days</dd></div><div><dt>SQLite budget</dt><dd>@(Options.MaximumDatabaseBytes / 1024 / 1024 / 1024) GiB</dd></div></dl></article>
                 <article><h2>Security</h2><dl><div><dt>Ingestion key</dt><dd>@(Options.RequireIngestionKey ? "Required" : "Disabled")</dd></div><div><dt>Sensitive attributes</dt><dd>@Options.SensitiveAttributePatterns.Length masked patterns</dd></div><div><dt>Access</dt><dd>Reader / Administrator</dd></div></dl></article>
             </section>

@@ -49,7 +49,11 @@
 }
 else
 {
-	<img style="image-rendering: pixelated; max-width: 100%; height: auto;"
-			src="data:image/png;base64,@base64Image"
-			alt="Authenticator setup QR code">
+	<div class="text-center">
+		<p class="mb-2 text-body-secondary">Authenticator entry</p>
+		<p class="mb-3"><strong>@Settings.Issuer</strong>: @Settings.ApplicationName</p>
+		<img style="image-rendering: pixelated; max-width: 100%; height: auto;"
+				src="data:image/png;base64,@base64Image"
+				alt="Authenticator setup QR code">
+	</div>
 }

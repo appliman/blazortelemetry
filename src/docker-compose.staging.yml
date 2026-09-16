@@ -9,7 +9,6 @@ services:
     pull_policy: always
     environment:
       ASPNETCORE_ENVIRONMENT: Staging
-      ASPNETCORE_URLS: http://0.0.0.0:8080
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
       DOTNET_RUNNING_IN_CONTAINER: "true"
       TZ: Europe/Paris
@@ -20,6 +19,7 @@ services:
       BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-false}
     expose:
       - "8080"
+      - "4317"
     volumes:
       - ${DATA_PATH:-/var/storeroot/blazor-telemetry/staging}:/data
     networks:
@@ -35,6 +35,12 @@ services:
       - "traefik.http.routers.blazor-telemetry-staging.tls=true"
       - "traefik.http.routers.blazor-telemetry-staging.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
       - "traefik.http.routers.blazor-telemetry-staging.service=blazor-telemetry-staging"
+      - "traefik.http.routers.blazor-telemetry-staging-grpc.rule=Host(`${DOMAIN:?Set DOMAIN without protocol or path}`) && PathPrefix(`/opentelemetry.proto.collector.`)"
+      - "traefik.http.routers.blazor-telemetry-staging-grpc.entrypoints=websecure"
+      - "traefik.http.routers.blazor-telemetry-staging-grpc.tls=true"
+      - "traefik.http.routers.blazor-telemetry-staging-grpc.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.blazor-telemetry-staging-grpc.priority=100"
+      - "traefik.http.routers.blazor-telemetry-staging-grpc.service=blazor-telemetry-staging-grpc"
       - "traefik.http.middlewares.blazor-telemetry-staging-redirect.redirectscheme.scheme=https"
       - "traefik.http.middlewares.blazor-telemetry-staging-redirect.redirectscheme.permanent=true"
       - "traefik.http.services.blazor-telemetry-staging.loadbalancer.server.port=8080"
@@ -42,6 +48,8 @@ services:
       - "traefik.http.services.blazor-telemetry-staging.loadbalancer.healthcheck.path=/health/live"
       - "traefik.http.services.blazor-telemetry-staging.loadbalancer.healthcheck.interval=30s"
       - "traefik.http.services.blazor-telemetry-staging.loadbalancer.healthcheck.timeout=5s"
+      - "traefik.http.services.blazor-telemetry-staging-grpc.loadbalancer.server.port=4317"
+      - "traefik.http.services.blazor-telemetry-staging-grpc.loadbalancer.server.scheme=h2c"
 
 networks:
   traefik:
