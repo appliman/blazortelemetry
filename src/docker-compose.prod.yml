@@ -1,8 +1,8 @@
-name: blazor-telemetry-prod
+﻿name: blazor-telemetry-prod
 
 services:
   blazor-telemetry:
-    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazor-telemetry:latest}
+    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazortelemetry:latest}
     container_name: blazor-telemetry-prod
     restart: unless-stopped
     stop_grace_period: 30s
@@ -15,7 +15,7 @@ services:
       TZ: Europe/Paris
       Blazor2fa__AllowedUserLogins__0: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
       Blazor2fa__SecretKey: ${BLAZOR2FA_SECRET_KEY:?Set BLAZOR2FA_SECRET_KEY}
-      BlazorTelemetry__IngestionKeys__application: ${BLAZOR_TELEMETRY_INGESTION_KEY:?Set BLAZOR_TELEMETRY_INGESTION_KEY}
+      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-false}
     expose:
       - "8080"
     volumes:

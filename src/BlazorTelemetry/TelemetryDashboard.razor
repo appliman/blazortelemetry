@@ -4,6 +4,9 @@
 @inject IJSRuntime JS
 
 @code {
+    [Parameter]
+    public RenderFragment? SidebarFooter { get; set; }
+
     private static readonly string? _assemblyVersion = typeof(TelemetryDashboard).Assembly.GetName().Version?.ToString(4);
     private readonly CancellationTokenSource _lifetime = new();
     private string _activeView = "dashboards";
@@ -412,6 +415,12 @@
             <button class="@(_activeView == "alerts" ? "active" : null)" @onclick='() => SelectView("alerts")'><span class="bt-nav-icon" aria-hidden="true">notifications</span>Alerts @if (_summary.ActiveIncidents > 0) { <b>@_summary.ActiveIncidents</b> }</button>
             <button class="@(_activeView == "admin" ? "active" : null)" @onclick='() => SelectView("admin")'><span class="bt-nav-icon" aria-hidden="true">admin_panel_settings</span>Administration</button>
         </nav>
+        @if (SidebarFooter is not null)
+        {
+            <div class="bt-sidebar-footer">
+                @SidebarFooter
+            </div>
+        }
         <div class="bt-collector-state"><span></span><div><strong>Collector active</strong><small>OTLP · HTTP/protobuf</small></div></div>
     </aside>
 

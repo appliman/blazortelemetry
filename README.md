@@ -62,7 +62,7 @@ The overview and operational dashboards remain usable on mobile, with compact na
 | Dashboards | Request duration, error rate, activity, protocols, and endpoint insights |
 | Alerts | Alert rules, persistent incidents, and state tracking |
 | Notifications | Webhook, SMTP, and [ntfy](https://ntfy.sh/) |
-| Security | Ingestion keys and passwordless TOTP authentication |
+| Security | Optional ingestion keys and passwordless TOTP authentication |
 | Storage | SQLite, automatic cleanup, separate retention policies, and a size budget |
 | Deployment | Local Docker, staging, and production behind Traefik |
 
@@ -86,14 +86,13 @@ OTLP reception is decoupled from database writes through a bounded queue. Backgr
 ### Prerequisites
 
 - Docker Desktop or Docker Engine with Docker Compose.
-- Three private values: the administrator email, a shared TOTP secret, and an ingestion key.
+- Two private values: the administrator email and a shared TOTP secret.
 
 From the `src` directory, create a local `.env` file. It is ignored by Git:
 
 ```dotenv
 BLAZOR_TELEMETRY_ADMIN_EMAIL=admin@example.com
 BLAZOR2FA_SECRET_KEY=replace-with-a-long-random-secret
-BLAZOR_TELEMETRY_INGESTION_KEY=replace-with-a-random-secret
 ```
 
 Start the container:
@@ -115,7 +114,6 @@ Configure your OpenTelemetry exporter to use OTLP HTTP/protobuf:
 OTEL_SERVICE_NAME=my-service
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-OTEL_EXPORTER_OTLP_HEADERS=X-BlazorTelemetry-Key=replace-with-a-random-secret
 ```
 
 Example ASP.NET Core configuration:
@@ -147,7 +145,9 @@ builder.Logging.AddOpenTelemetry(logging =>
 });
 ```
 
-The key must be sent through the `X-BlazorTelemetry-Key` header. Configured keys are compared in constant time. Keys created from the administration interface are stored as SHA-256 hashes and are displayed only once.
+Ingestion key validation is disabled by default, so no authentication header is required. In this mode, restrict access to the OTLP endpoints at the network or reverse-proxy layer, for example with an IP allowlist.
+
+To require a key, set `BlazorTelemetry__RequireIngestionKey=true` (`BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY=true` with the provided Docker Compose files), create a key from the administration interface, and send it through `OTEL_EXPORTER_OTLP_HEADERS=X-BlazorTelemetry-Key=replace-with-the-generated-key`. Configured keys are compared in constant time. Keys created from the administration interface are stored as SHA-256 hashes and are displayed only once.
 
 ## Embed the dashboard in a Blazor application
 
@@ -193,7 +193,7 @@ The `BlazorTelemetry` section can be configured in `appsettings.json` or through
 | `MetricRetentionDays` | `30` | Retention for metric points |
 | `MaximumDatabaseBytes` | `10737418240` | Maximum database budget: 10 GiB |
 | `MaximumRequestBytes` | `8388608` | Maximum OTLP request size: 8 MiB |
-| `RequireIngestionKey` | `true` | Reject ingestion requests without a valid key |
+| `RequireIngestionKey` | `false` | Reject ingestion requests without a valid key when enabled |
 | `IngestionKeys` | `{}` | `application → key` dictionary |
 
 Environment variable example:
@@ -216,7 +216,6 @@ cd src
 DOMAIN=telemetry.example.com \
 BLAZOR_TELEMETRY_ADMIN_EMAIL=admin@example.com \
 BLAZOR2FA_SECRET_KEY='replace-with-a-long-random-secret' \
-BLAZOR_TELEMETRY_INGESTION_KEY='replace-with-a-random-secret' \
 docker compose -f docker-compose.prod.yml up -d
 ```
 

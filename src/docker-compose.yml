@@ -19,7 +19,7 @@ services:
       TZ: Europe/Paris
       Blazor2fa__AllowedUserLogins__0: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
       Blazor2fa__SecretKey: ${BLAZOR2FA_SECRET_KEY:?Set BLAZOR2FA_SECRET_KEY}
-      BlazorTelemetry__IngestionKeys__application: ${BLAZOR_TELEMETRY_INGESTION_KEY:?Set BLAZOR_TELEMETRY_INGESTION_KEY}
+      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-false}
     volumes:
       - blazor-telemetry-data:/data
 

@@ -5,6 +5,7 @@
 @using System.Text
 @using BlazorTelemetry.Core
 @inject ITelemetryRepository Repository
+@inject BlazorTelemetryOptions Options
 
 @code {
     private IReadOnlyList<IngestionApplication> _applications = [];
@@ -68,6 +69,12 @@
 
     <section>
         <h2>Ingestion keys</h2>
+        @if (!Options.RequireIngestionKey)
+        {
+            <div class="admin-message" role="status">
+                Ingestion key validation is disabled. These keys are ignored until RequireIngestionKey is enabled.
+            </div>
+        }
         <div class="admin-form key-form">
             <label>Application <input @bind="_applicationName" /></label>
             <button type="button" @onclick="CreateIngestionKey">Generate key</button>

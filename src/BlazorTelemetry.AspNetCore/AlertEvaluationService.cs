@@ -27,7 +27,7 @@ internal sealed class AlertEvaluationService(
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    private async Task Evaluate(CancellationToken cancellationToken)
+    internal async Task Evaluate(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<ITelemetryRepository>();
@@ -37,54 +37,66 @@ internal sealed class AlertEvaluationService(
 
         foreach (var rule in rules.Where(rule => rule.IsEnabled && (!rule.SilencedUntilUtc.HasValue || rule.SilencedUntilUtc <= now)))
         {
-            var value = await GetObservedValue(repository, rule, now, cancellationToken);
-            var exceeds = rule.Type == AlertRuleType.TelemetryAbsence ? value >= rule.Threshold : value > rule.Threshold;
             await using var context = await factory.CreateDbContextAsync(cancellationToken);
-            var incident = await context.Incidents.FirstOrDefaultAsync(item => item.AlertRuleId == rule.Id && item.State != IncidentState.Resolved, cancellationToken);
+            var activeIncidents = await context.Incidents
+                .Where(item => item.AlertRuleId == rule.Id && item.State != IncidentState.Resolved)
+                .ToListAsync(cancellationToken);
+            var observedValues = await GetObservedValues(repository, rule, now, cancellationToken);
+            var services = observedValues.Keys
+                .Concat(activeIncidents.Select(incident => incident.ServiceName))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
 
-            if (exceeds)
+            foreach (var service in services)
             {
-                if (incident is null)
+                var value = observedValues.GetValueOrDefault(service);
+                var exceeds = rule.Type == AlertRuleType.TelemetryAbsence ? value >= rule.Threshold : value > rule.Threshold;
+                var incident = activeIncidents.FirstOrDefault(item => item.ServiceName == service);
+
+                if (exceeds)
                 {
-                    incident = new Incident
+                    if (incident is null)
                     {
-                        AlertRuleId = rule.Id,
-                        RuleName = rule.Name,
-                        ServiceName = rule.ServiceName,
-                        Severity = rule.Severity,
-                        State = rule.ConfirmationMinutes == 0 ? IncidentState.Firing : IncidentState.Pending,
-                        ObservedValue = value,
-                        Threshold = rule.Threshold,
-                        StartedUtc = now,
-                        LastEvaluatedUtc = now
-                    };
-                    context.Incidents.Add(incident);
-                    await context.SaveChangesAsync(cancellationToken);
-                    if (incident.State == IncidentState.Firing)
+                        incident = new Incident
+                        {
+                            AlertRuleId = rule.Id,
+                            RuleName = rule.Name,
+                            ServiceName = service,
+                            Severity = rule.Severity,
+                            State = rule.ConfirmationMinutes == 0 ? IncidentState.Firing : IncidentState.Pending,
+                            ObservedValue = value,
+                            Threshold = rule.Threshold,
+                            StartedUtc = now,
+                            LastEvaluatedUtc = now
+                        };
+                        context.Incidents.Add(incident);
+                        await context.SaveChangesAsync(cancellationToken);
+                        if (incident.State == IncidentState.Firing)
+                        {
+                            QueueNotifications(context, rule, incident, "firing", now);
+                        }
+                    }
+                    else
                     {
-                        QueueNotifications(context, rule, incident, "firing", now);
+                        incident.ObservedValue = value;
+                        incident.LastEvaluatedUtc = now;
+                        if (incident.State == IncidentState.Pending && now - incident.StartedUtc >= TimeSpan.FromMinutes(rule.ConfirmationMinutes))
+                        {
+                            incident.State = IncidentState.Firing;
+                            QueueNotifications(context, rule, incident, "firing", now);
+                        }
                     }
                 }
-                else
+                else if (incident is not null)
                 {
-                    incident.ObservedValue = value;
+                    var wasFiring = incident.State == IncidentState.Firing;
+                    incident.State = IncidentState.Resolved;
+                    incident.ResolvedUtc = now;
                     incident.LastEvaluatedUtc = now;
-                    if (incident.State == IncidentState.Pending && now - incident.StartedUtc >= TimeSpan.FromMinutes(rule.ConfirmationMinutes))
+                    if (wasFiring)
                     {
-                        incident.State = IncidentState.Firing;
-                        QueueNotifications(context, rule, incident, "firing", now);
+                        QueueNotifications(context, rule, incident, "resolved", now);
                     }
-                }
-            }
-            else if (incident is not null)
-            {
-                var wasFiring = incident.State == IncidentState.Firing;
-                incident.State = IncidentState.Resolved;
-                incident.ResolvedUtc = now;
-                incident.LastEvaluatedUtc = now;
-                if (wasFiring)
-                {
-                    QueueNotifications(context, rule, incident, "resolved", now);
                 }
             }
 
@@ -92,14 +104,35 @@ internal sealed class AlertEvaluationService(
         }
     }
 
-    private static async Task<double> GetObservedValue(ITelemetryRepository repository, AlertRule rule, DateTimeOffset now, CancellationToken cancellationToken)
+    private static async Task<IReadOnlyDictionary<string, double>> GetObservedValues(
+        ITelemetryRepository repository,
+        AlertRule rule,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         var fromUtc = now.AddMinutes(-Math.Max(1, rule.WindowMinutes));
         var service = rule.ServiceName == "*" ? null : rule.ServiceName;
+        if (rule.Type == AlertRuleType.ErrorLogs)
+        {
+            var counts = await repository.GetErrorCountsByService(fromUtc, service, rule.Query, cancellationToken);
+            if (service is null)
+            {
+                return counts.ToDictionary(item => item.Key, item => (double)item.Value, StringComparer.Ordinal);
+            }
+
+            return new Dictionary<string, double>(StringComparer.Ordinal)
+            {
+                [service] = counts.GetValueOrDefault(service)
+            };
+        }
+
         if (rule.Type == AlertRuleType.MetricThreshold)
         {
             var series = await repository.GetMetricSeries(rule.Query ?? string.Empty, service, fromUtc, cancellationToken);
-            return series.Count == 0 ? 0 : series.Max(point => point.Value);
+            return new Dictionary<string, double>(StringComparer.Ordinal)
+            {
+                [rule.ServiceName] = series.Count == 0 ? 0 : series.Max(point => point.Value)
+            };
         }
 
         var page = await repository.Query(new TelemetryQuery(
@@ -109,13 +142,16 @@ internal sealed class AlertEvaluationService(
             FromUtc: fromUtc,
             Take: 500), cancellationToken);
 
-        return rule.Type switch
+        var value = rule.Type switch
         {
-            AlertRuleType.ErrorLogs => page.Items.Count(item => (item.SeverityNumber ?? 0) >= 17),
             AlertRuleType.TraceErrorRate => page.Items.Count == 0 ? 0 : page.Items.Count(item => item.StatusCode == 2) * 100d / page.Items.Count,
             AlertRuleType.TraceLatency => Percentile95(page.Items.Where(item => item.DurationMs.HasValue).Select(item => item.DurationMs!.Value).OrderBy(value => value).ToList()),
             AlertRuleType.TelemetryAbsence => page.Items.Count == 0 ? rule.WindowMinutes : Math.Max(0, (now - page.Items.Max(item => item.TimestampUtc)).TotalMinutes),
             _ => 0
+        };
+        return new Dictionary<string, double>(StringComparer.Ordinal)
+        {
+            [rule.ServiceName] = value
         };
     }
 

@@ -1,6 +1,7 @@
 html, body { margin: 0; min-height: 100%; background: #0b0f13; color: #edf3f6; }
 body { font-family: "IBM Plex Sans", sans-serif; }
 a { color: #76e4b8; }
+.telemetry-page { min-height: 100vh; min-height: 100dvh; --blazor-telemetry-min-height: 100vh; --blazor-telemetry-min-height: 100dvh; }
 .content { padding: 1.5rem; }
 .valid.modified:not([type=checkbox]) { outline: 1px solid #76e4b8; }
 .invalid { outline: 1px solid #ff7b72; }
