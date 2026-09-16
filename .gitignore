@@ -47,6 +47,12 @@ bld/
 [Ll]og/
 [Ll]ogs/
 
+# Keep the vendored OpenTelemetry log protocol definitions tracked.
+!src/BlazorTelemetry.AspNetCore/Protos/opentelemetry/proto/logs/
+!src/BlazorTelemetry.AspNetCore/Protos/opentelemetry/proto/logs/**
+!src/BlazorTelemetry.AspNetCore/Protos/opentelemetry/proto/collector/logs/
+!src/BlazorTelemetry.AspNetCore/Protos/opentelemetry/proto/collector/logs/**
+
 # Build results on 'Bin' directories
 **/[Bb]in/*
 # Uncomment if you have tasks that rely on *.refresh files to move binaries
