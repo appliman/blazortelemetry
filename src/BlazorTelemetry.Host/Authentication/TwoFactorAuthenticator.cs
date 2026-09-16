@@ -22,90 +22,67 @@ public class TwoFactorAuthenticator
 	/// <summary>
 	/// Generate a setup code for a Google Authenticator user to scan.
 	/// </summary>
-	/// <param name="accountTitleNoSpaces">Account Title (no spaces)</param>
+	/// <param name="applicationName">Application name displayed by the authenticator.</param>
 	/// <param name="accountSecretKey">Account Secret Key</param>
 	/// <param name="qrCodeWidth">QR Code Width</param>
 	/// <param name="qrCodeHeight">QR Code Height</param>
 	/// <returns>SetupCode object</returns>
-	internal SetupCode GenerateSetupCode(string accountTitleNoSpaces, string accountSecretKey, int qrCodeWidth, int qrCodeHeight)
+	internal SetupCode GenerateSetupCode(string applicationName, string accountSecretKey, int qrCodeWidth, int qrCodeHeight)
 	{
-		return GenerateSetupCode(null, accountTitleNoSpaces, accountSecretKey, qrCodeWidth, qrCodeHeight);
+		return GenerateSetupCode(null, applicationName, accountSecretKey, qrCodeWidth, qrCodeHeight);
 	}
 
 	/// <summary>
 	/// Generate a setup code for a Google Authenticator user to scan (with issuer ID).
 	/// </summary>
 	/// <param name="issuer">Issuer ID (the name of the system, i.e. 'MyApp')</param>
-	/// <param name="accountTitleNoSpaces">Account Title (no spaces)</param>
+	/// <param name="applicationName">Application name displayed by the authenticator.</param>
 	/// <param name="accountSecretKey">Account Secret Key</param>
 	/// <param name="qrCodeWidth">QR Code Width</param>
 	/// <param name="qrCodeHeight">QR Code Height</param>
 	/// <returns>SetupCode object</returns>
-	internal SetupCode GenerateSetupCode(string? issuer, string accountTitleNoSpaces, string accountSecretKey, int qrCodeWidth, int qrCodeHeight)
+	internal SetupCode GenerateSetupCode(string? issuer, string applicationName, string accountSecretKey, int qrCodeWidth, int qrCodeHeight)
 	{
-		return GenerateSetupCode(issuer, accountTitleNoSpaces, accountSecretKey, qrCodeWidth, qrCodeHeight, false);
+		return GenerateSetupCode(issuer, applicationName, accountSecretKey, qrCodeWidth, qrCodeHeight, false);
 	}
 
 	/// <summary>
 	/// Generate a setup code for a Google Authenticator user to scan (with issuer ID).
 	/// </summary>
 	/// <param name="issuer">Issuer ID (the name of the system, i.e. 'MyApp')</param>
-	/// <param name="accountTitleNoSpaces">Account Title (no spaces)</param>
+	/// <param name="applicationName">Application name displayed by the authenticator.</param>
 	/// <param name="accountSecretKey">Account Secret Key</param>
 	/// <param name="qrCodeWidth">QR Code Width</param>
 	/// <param name="qrCodeHeight">QR Code Height</param>
 	/// <param name="useHttps">Use HTTPS instead of HTTP</param>
 	/// <returns>SetupCode object</returns>
-	internal SetupCode GenerateSetupCode(string? issuer, string accountTitleNoSpaces, string accountSecretKey, int qrCodeWidth, int qrCodeHeight, bool useHttps)
+	internal SetupCode GenerateSetupCode(string? issuer, string applicationName, string accountSecretKey, int qrCodeWidth, int qrCodeHeight, bool useHttps)
 	{
-		if (accountTitleNoSpaces == null) { throw new NullReferenceException("Account Title is null"); }
+		ArgumentException.ThrowIfNullOrWhiteSpace(applicationName);
 
-		accountTitleNoSpaces = accountTitleNoSpaces.Replace(" ", "");
-
-		SetupCode sC = new SetupCode();
-		sC.Account = accountTitleNoSpaces;
-		sC.AccountSecretKey = accountSecretKey;
-
-		string encodedSecretKey = EncodeAccountSecretKey(accountSecretKey);
-		sC.ManualEntryKey = encodedSecretKey;
-
-		string? provisionUrl = null;
-
-		if (string.IsNullOrEmpty(issuer))
+		var normalizedApplicationName = applicationName.Trim();
+		var normalizedIssuer = issuer?.Trim();
+		var accountLabel = string.IsNullOrWhiteSpace(normalizedIssuer)
+			? normalizedApplicationName
+			: $"{normalizedIssuer}:{normalizedApplicationName}";
+		var encodedSecretKey = EncodeAccountSecretKey(accountSecretKey);
+		var query = $"secret={Uri.EscapeDataString(encodedSecretKey)}";
+		if (!string.IsNullOrWhiteSpace(normalizedIssuer))
 		{
-			provisionUrl = UrlEncode(String.Format("otpauth://totp/{0}?secret={1}", accountTitleNoSpaces, encodedSecretKey));
-		}
-		else
-		{
-			provisionUrl = UrlEncode(String.Format("otpauth://totp/{0}?secret={1}&issuer={2}", accountTitleNoSpaces, encodedSecretKey, UrlEncode(issuer)));
+			query += $"&issuer={Uri.EscapeDataString(normalizedIssuer)}";
 		}
 
-		string protocol = useHttps ? "https" : "http";
-		string url = String.Format("{0}://chart.googleapis.com/chart?cht=qr&chs={1}x{2}&chl={3}", protocol, qrCodeWidth, qrCodeHeight, provisionUrl);
+		var provisioningUri = $"otpauth://totp/{Uri.EscapeDataString(accountLabel)}?{query}";
+		var protocol = useHttps ? "https" : "http";
+		var url = $"{protocol}://chart.googleapis.com/chart?cht=qr&chs={qrCodeWidth}x{qrCodeHeight}&chl={Uri.EscapeDataString(provisioningUri)}";
 
-		sC.QrCodeSetupImageUrl = url;
-
-		return sC;
-	}
-
-	private string UrlEncode(string value)
-	{
-		StringBuilder result = new StringBuilder();
-		string validChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~";
-
-		foreach (char symbol in value)
+		return new SetupCode
 		{
-			if (validChars.IndexOf(symbol) != -1)
-			{
-				result.Append(symbol);
-			}
-			else
-			{
-				result.Append('%' + String.Format("{0:X2}", (int)symbol));
-			}
-		}
-
-		return result.ToString().Replace(" ", "%20");
+			Account = normalizedApplicationName,
+			AccountSecretKey = accountSecretKey,
+			ManualEntryKey = encodedSecretKey,
+			QrCodeSetupImageUrl = url
+		};
 	}
 
 	private string EncodeAccountSecretKey(string accountSecretKey)
