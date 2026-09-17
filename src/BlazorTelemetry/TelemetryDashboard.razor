@@ -598,12 +598,15 @@
                         var _start = _trace.Min(_item => _item.TimestampUtc);
                         var _duration = _trace.Max(_item => (_item.TimestampUtc - _start).TotalMilliseconds + SpanDuration(_item));
                         var _rows = TraceRows(_trace).ToArray();
+                        var _traceName = _rows[0].Item.Name;
                         var _isExpanded = _expandedTraces.Contains(_trace.Key);
                         <section class="bt-trace-group" @key="_trace.Key" aria-label="Trace @_trace.Key">
                             <header class="bt-trace-summary">
                                 <button class="bt-trace-toggle" type="button" aria-label="@(_isExpanded ? "Collapse" : "Expand") trace @ShortId(_trace.First().TraceId)" aria-expanded="@_isExpanded" @onclick="() => ToggleTrace(_trace.Key)"><span class="bt-nav-icon" aria-hidden="true">@(_isExpanded ? "expand_more" : "chevron_right")</span></button>
-                                <strong>Trace <code>@ShortId(_trace.First().TraceId)</code></strong>
-                                <span>@FormatTime(_start)</span><span>Duration <b>@TraceNumber(_duration) ms</b></span>
+                                <strong class="bt-trace-name" title="@_traceName">@_traceName</strong>
+                                <time class="bt-trace-start mono" datetime="@_start.ToString("O")" title="@FormatUtcTime(_start)">@_start.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</time>
+                                <span>Trace <code>@ShortId(_trace.First().TraceId)</code></span>
+                                <span>Duration <b>@TraceNumber(_duration) ms</b></span>
                                 <span>Resources <b>@_trace.Select(_item => _item.ServiceName).Distinct().Count()</b></span>
                                 <span>Spans <b>@_trace.Count()</b></span>
                                 @if (_selectedTraceId is null && !string.IsNullOrWhiteSpace(_trace.First().TraceId))
