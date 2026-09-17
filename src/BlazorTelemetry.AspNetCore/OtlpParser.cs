@@ -71,6 +71,8 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                     var duration = span.EndTimeUnixNano >= span.StartTimeUnixNano
                         ? (span.EndTimeUnixNano - span.StartTimeUnixNano) / 1_000_000d
                         : 0;
+                    var attributes = valueConverter.ToDictionary(span.Attributes);
+                    var attributesJson = JsonSerializer.Serialize(attributes);
                     result.Add(new TelemetryItem
                     {
                         Kind = TelemetryKind.Trace,
@@ -87,7 +89,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         StatusCode = (int)(span.Status?.Code ?? 0),
                         Body = span.Status?.Message,
                         ResourceAttributesJson = JsonSerializer.Serialize(resource),
-                        AttributesJson = valueConverter.ToJson(span.Attributes),
+                        AttributesJson = attributesJson,
                         DetailsJson = JsonSerializer.Serialize(new
                         {
                             kind = span.Kind.ToString(),
@@ -107,6 +109,34 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         }),
                         Fingerprint = Hash($"trace:{traceId}:{spanId}")
                     });
+
+                    if (span.Kind == OpenTelemetry.Proto.Trace.V1.Span.Types.SpanKind.Server)
+                    {
+                        result.Add(new TelemetryItem
+                        {
+                            Kind = TelemetryKind.Request,
+                            TimestampUtc = FromUnixNano(span.StartTimeUnixNano),
+                            ObservedUtc = DateTimeOffset.UtcNow,
+                            ServiceName = service,
+                            ServiceVersion = GetString(resource, "service.version"),
+                            Environment = GetString(resource, "deployment.environment.name") ?? GetString(resource, "deployment.environment"),
+                            Name = RequestName(span.Name, attributes),
+                            Body = GetString(attributes, "http.request.method") ?? GetString(attributes, "http.method") ?? "—",
+                            TraceId = traceId,
+                            SpanId = spanId,
+                            ParentSpanId = ToHex(span.ParentSpanId),
+                            DurationMs = duration,
+                            StatusCode = GetInt(attributes, "http.response.status_code") ?? GetInt(attributes, "http.status_code"),
+                            ResourceAttributesJson = JsonSerializer.Serialize(resource),
+                            AttributesJson = attributesJson,
+                            DetailsJson = JsonSerializer.Serialize(new
+                            {
+                                kind = span.Kind.ToString(),
+                                source = "OTLP server span"
+                            }),
+                            Fingerprint = Hash($"request:{traceId}:{spanId}")
+                        });
+                    }
                 }
             }
         }
@@ -280,6 +310,45 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
     private static string? GetString(IReadOnlyDictionary<string, object?> source, string key)
     {
         return source.TryGetValue(key, out var value) ? value?.ToString() : null;
+    }
+
+    private static int? GetInt(IReadOnlyDictionary<string, object?> source, string key)
+    {
+        if (!source.TryGetValue(key, out var value) || value is null)
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            int number => number,
+            long number when number is >= int.MinValue and <= int.MaxValue => (int)number,
+            _ when int.TryParse(value.ToString(), out var number) => number,
+            _ => null
+        };
+    }
+
+    private static string RequestName(string spanName, IReadOnlyDictionary<string, object?> attributes)
+    {
+        var fullUrl = GetString(attributes, "url.full") ?? GetString(attributes, "http.url");
+        if (!string.IsNullOrWhiteSpace(fullUrl))
+        {
+            return fullUrl;
+        }
+
+        var path = GetString(attributes, "url.path")
+            ?? GetString(attributes, "http.target")
+            ?? GetString(attributes, "http.route");
+        var host = GetString(attributes, "server.address") ?? GetString(attributes, "http.host");
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return path ?? spanName;
+        }
+
+        var scheme = GetString(attributes, "url.scheme") ?? GetString(attributes, "http.scheme") ?? "http";
+        var port = GetInt(attributes, "server.port");
+        var portPart = port.HasValue ? $":{port.Value}" : string.Empty;
+        return $"{scheme}://{host}{portPart}{path}";
     }
 
     private static string Hash(string value)
