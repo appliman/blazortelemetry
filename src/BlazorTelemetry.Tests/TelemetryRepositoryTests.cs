@@ -25,6 +25,62 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RequestCollectionTracksArbitraryRoutesAndCompletion()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        _context.Request.Path = "/customers/42/orders";
+        _context.Request.Host = new Microsoft.AspNetCore.Http.HostString("localhost");
+        _context.Request.Scheme = "https";
+        _context.Request.Method = "POST";
+        _context.Request.Headers.UserAgent = "Request test agent";
+        _context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+        var _middleware = new RequestTelemetryMiddleware(async _http =>
+        {
+            var _active = Assert.Single((await _repository.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
+            Assert.Null(_active.DurationMs);
+            _http.Response.StatusCode = 201;
+        }, NullLogger<RequestTelemetryMiddleware>.Instance);
+
+        await _middleware.InvokeAsync(_context, _repository, new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { ApplicationName = "test" });
+
+        var _item = Assert.Single((await _repository.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
+        Assert.Equal("https://localhost/customers/42/orders", _item.Name);
+        Assert.Equal("POST", _item.Body);
+        Assert.Equal(201, _item.StatusCode);
+        Assert.True(_item.DurationMs >= 0);
+        Assert.Contains("127.0.0.1", _item.AttributesJson);
+        Assert.Contains("Request test agent", _item.AttributesJson);
+    }
+
+    [Fact]
+    public async Task FailedRequestIsCompletedAndOriginalExceptionIsPreserved()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        _context.Request.Path = "/any-route.json";
+        var _middleware = new RequestTelemetryMiddleware(_ => throw new InvalidOperationException("Test failure"), NullLogger<RequestTelemetryMiddleware>.Instance);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _middleware.InvokeAsync(_context, _repository,
+            new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { ApplicationName = "test" }));
+        var _item = Assert.Single((await _repository.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
+        Assert.Equal(500, _item.StatusCode);
+        Assert.NotNull(_item.DurationMs);
+    }
+
+    [Fact]
+    public async Task CollectorRequestsDoNotRecordThemselves()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        _context.Request.Path = "/v1/traces";
+        var _called = false;
+        var _middleware = new RequestTelemetryMiddleware(_ => { _called = true; return Task.CompletedTask; }, NullLogger<RequestTelemetryMiddleware>.Instance);
+        await _middleware.InvokeAsync(_context, _repository, new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { ApplicationName = "test" });
+        Assert.True(_called);
+        Assert.Empty((await _repository.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
+    }
+
+    [Fact]
     public async Task QueryFiltersByKindServiceAndTrace()
     {
         var repository = new TelemetryRepository(new TestDbContextFactory(_options));

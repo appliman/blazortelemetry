@@ -3,6 +3,7 @@ namespace BlazorTelemetry.Core;
 public interface ITelemetryRepository
 {
     Task Store(IReadOnlyCollection<TelemetryItem> items, CancellationToken cancellationToken);
+    Task CompleteRequest(string requestId, double durationMs, int statusCode, CancellationToken cancellationToken);
     Task<TelemetryPage> Query(TelemetryQuery query, CancellationToken cancellationToken);
     Task<TelemetrySummary> GetSummary(DateTimeOffset fromUtc, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<string, long>> GetErrorCountsByService(DateTimeOffset fromUtc, string? serviceName, string? search, CancellationToken cancellationToken);

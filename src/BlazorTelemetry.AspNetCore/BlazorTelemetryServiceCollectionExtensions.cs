@@ -43,6 +43,9 @@ public static class BlazorTelemetryServiceCollectionExtensions
         services.AddHostedService<AlertEvaluationService>();
         services.AddHostedService<NotificationDeliveryService>();
         services.AddHttpClient();
+        services.AddHttpContextAccessor();
+        services.AddScoped<TelemetryCircuitHandler>();
+        services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler>(provider => provider.GetRequiredService<TelemetryCircuitHandler>());
         return services;
     }
 

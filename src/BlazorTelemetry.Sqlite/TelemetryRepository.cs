@@ -5,6 +5,14 @@ namespace BlazorTelemetry.Sqlite;
 
 public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> contextFactory) : ITelemetryRepository
 {
+    public async Task CompleteRequest(string requestId, double durationMs, int statusCode, CancellationToken cancellationToken)
+    {
+        await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await _context.TelemetryItems.Where(_item => _item.Kind == TelemetryKind.Request && _item.TraceId == requestId)
+            .ExecuteUpdateAsync(_setters => _setters.SetProperty(_item => _item.DurationMs, durationMs)
+                .SetProperty(_item => _item.StatusCode, statusCode), cancellationToken);
+    }
+
     public async Task<IReadOnlyList<IngestionApplication>> GetIngestionApplications(CancellationToken cancellationToken)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);

@@ -12,7 +12,19 @@
     public IReadOnlyList<double> Values { get; set; } = [];
 
     [Parameter]
+    public IReadOnlyList<double> SecondaryValues { get; set; } = [];
+
+    [Parameter]
+    public string SeriesLabel { get; set; } = "Value";
+
+    [Parameter]
+    public string SecondarySeriesLabel { get; set; } = "Comparison";
+
+    [Parameter]
     public string Color { get; set; } = "#76e4b8";
+
+    [Parameter]
+    public string SecondaryColor { get; set; } = "#78a9ff";
 
     [Parameter]
     public string Unit { get; set; } = string.Empty;
@@ -23,7 +35,7 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/BlazorTelemetry/telemetry-chart.js");
-        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, Color, Unit);
+        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, SecondaryValues, SeriesLabel, SecondarySeriesLabel, Color, SecondaryColor, Unit);
     }
 
     public async ValueTask DisposeAsync()
