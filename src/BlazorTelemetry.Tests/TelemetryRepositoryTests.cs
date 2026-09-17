@@ -96,6 +96,28 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QueryCanExcludeRequestsFromTheHostingApplicationBeforePagination()
+    {
+        var repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var timestamp = DateTimeOffset.UtcNow;
+        await repository.Store([
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(2), ObservedUtc = timestamp, ServiceName = "BlazorTelemetry.Host", Name = "https://telemetry.example.com/" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(1), ObservedUtc = timestamp, ServiceName = "BlazorTelemetry.Host", Name = "http://localhost:8080/health/live" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp, ObservedUtc = timestamp, ServiceName = "Customer.WebApp", Name = "https://customer.example.com/orders" }
+        ], CancellationToken.None);
+
+        var page = await repository.Query(new TelemetryQuery(
+            TelemetryKind.Request,
+            Take: 1,
+            ExcludedServiceName: "BlazorTelemetry.Host"), CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal("Customer.WebApp", item.ServiceName);
+        Assert.Equal(1, page.Total);
+        Assert.False(page.IsTruncated);
+    }
+
+    [Fact]
     public async Task StoreDeduplicatesIdentifiableItemsAndKeepsLegitimateDuplicateLogs()
     {
         var repository = new TelemetryRepository(new TestDbContextFactory(_options));

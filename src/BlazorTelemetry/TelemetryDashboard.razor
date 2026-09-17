@@ -1,6 +1,7 @@
 @implements IAsyncDisposable
 @inject ITelemetryRepository Repository
 @inject BlazorTelemetryOptions Options
+@inject Microsoft.Extensions.Hosting.IHostEnvironment HostEnvironment
 @inject IJSRuntime JS
 
 @code {
@@ -93,7 +94,8 @@
                     fromUtc,
                     Take: 200,
                     MinimumSeverityNumber: minimumSeverityNumber,
-                    MaximumSeverityNumber: maximumSeverityNumber), _lifetime.Token);
+                    MaximumSeverityNumber: maximumSeverityNumber,
+                    ExcludedServiceName: _activeView == "requests" ? HostEnvironment.ApplicationName : null), _lifetime.Token);
                 if (_activeView == "metrics")
                 {
                     _selectedMetric ??= _page.Items.FirstOrDefault()?.Name;

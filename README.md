@@ -31,6 +31,10 @@ BlazorTelemetry is designed for small .NET teams that need to understand their a
 
 ## Product tour
 
+Move from the service overview to operational dashboards, structured logs, distributed traces, and metrics without leaving the application.
+
+![BlazorTelemetry product tour showing overview, dashboards, logs, traces, and metrics](docs/images/product-tour.gif)
+
 ### Investigate without switching tools
 
 The detail drawer exposes the OTLP level, service, environment, timestamps, attributes, and correlation identifiers. Selecting the `TraceId` opens the related trace directly.
