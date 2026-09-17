@@ -110,6 +110,11 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             source = source.Where(item => item.ServiceName == query.ServiceName);
         }
 
+        if (!string.IsNullOrWhiteSpace(query.ExcludedServiceName))
+        {
+            source = source.Where(item => item.ServiceName != query.ExcludedServiceName);
+        }
+
         if (!string.IsNullOrWhiteSpace(query.TraceId))
         {
             source = source.Where(item => item.TraceId == query.TraceId);

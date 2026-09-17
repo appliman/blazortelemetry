@@ -10,4 +10,5 @@ public sealed record TelemetryQuery(
     int Skip = 0,
     int Take = 100,
     int? MinimumSeverityNumber = null,
-    int? MaximumSeverityNumber = null);
+    int? MaximumSeverityNumber = null,
+    string? ExcludedServiceName = null);
