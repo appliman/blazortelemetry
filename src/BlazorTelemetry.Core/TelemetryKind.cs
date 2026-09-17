@@ -4,5 +4,6 @@ public enum TelemetryKind
 {
     Log = 1,
     Trace = 2,
-    Metric = 3
+    Metric = 3,
+    Request = 4
 }

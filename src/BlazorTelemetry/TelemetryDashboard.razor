@@ -73,12 +73,13 @@
             _error = null;
             var fromUtc = DateTimeOffset.UtcNow.AddHours(-1);
             _summary = await Repository.GetSummary(fromUtc, _lifetime.Token);
-            if (_activeView is "logs" or "traces" or "metrics")
+            if (_activeView is "logs" or "traces" or "metrics" or "requests")
             {
                 var kind = _activeView switch
                 {
                     "logs" => TelemetryKind.Log,
                     "traces" => TelemetryKind.Trace,
+                    "requests" => TelemetryKind.Request,
                     _ => TelemetryKind.Metric
                 };
                 var (minimumSeverityNumber, maximumSeverityNumber) = _activeView == "logs"
@@ -410,8 +411,22 @@
         "critical" => (21, 24),
         _ => (null, null)
     };
-    private string ViewTitle() => _activeView switch { "summary" => "Overview", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboards", "alerts" => "Alert center", _ => "Administration" };
-    private string ViewSubtitle() => _activeView switch { "summary" => "An immediate view of your applications' health", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
+    private string ViewTitle() => _activeView switch { "requests" => "Requests", "summary" => "Overview", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboards", "alerts" => "Alert center", _ => "Administration" };
+    private string ViewSubtitle() => _activeView switch { "requests" => "Live HTTP requests and recent route activity · last hour", "summary" => "An immediate view of your applications' health", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
+
+    private static string RequestAttribute(string json, string key)
+    {
+        try
+        {
+            using var _document = JsonDocument.Parse(json);
+            return _document.RootElement.TryGetProperty(key, out var _value) && _value.ValueKind != JsonValueKind.Null
+                ? _value.ToString() : "—";
+        }
+        catch (JsonException)
+        {
+            return "—";
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -436,6 +451,7 @@
         <nav aria-label="Telemetry navigation">
             <button class="@(_activeView == "summary" ? "active" : null)" @onclick='() => SelectView("summary")'><span class="bt-nav-icon" aria-hidden="true">space_dashboard</span>Overview</button>
             <button class="@(_activeView == "dashboards" ? "active" : null)" @onclick='() => SelectView("dashboards")'><span class="bt-nav-icon" aria-hidden="true">dashboard</span>Dashboards</button>
+            <button class="@(_activeView == "requests" ? "active" : null)" @onclick='() => SelectView("requests")'><span class="bt-nav-icon" aria-hidden="true">http</span>Requests</button>
             <button class="@(_activeView == "logs" ? "active" : null)" @onclick='() => SelectView("logs")'><span class="bt-nav-icon" aria-hidden="true">description</span>Logs</button>
             <button class="@(_activeView == "traces" ? "active" : null)" @onclick='() => SelectView("traces")'><span class="bt-nav-icon" aria-hidden="true">account_tree</span>Traces</button>
             <button class="@(_activeView == "metrics" ? "active" : null)" @onclick='() => SelectView("metrics")'><span class="bt-nav-icon" aria-hidden="true">query_stats</span>Metrics</button>
@@ -530,7 +546,7 @@
                 </aside>
             </div>
         }
-        else if (_activeView is "logs" or "traces" or "metrics")
+        else if (_activeView is "logs" or "traces" or "metrics" or "requests")
         {
             <div class="@(_activeView == "metrics" ? "bt-metrics-view" : "bt-signal-view")">
                 @if (_activeView == "metrics" && _selectedMetric is not null)
@@ -545,6 +561,25 @@
                 @if (_page.Items.Count == 0)
                 {
                     <div class="bt-empty"><strong>No signals match this filter</strong><p>Expand the time range or check the exporter configuration.</p></div>
+                }
+                else if (_activeView == "requests")
+                {
+                    <p class="bt-result-count">HTTP duration covers server processing. Blazor navigation identifies circuit activity without an HTTP request. Initial HTTP and SSR requests have no circuit yet. In progress means no HTTP completion has been recorded yet.</p>
+                    <table class="bt-requests-table"><thead><tr><th>Date / time</th><th>Route</th><th>Method</th><th>Blazor session</th><th>IP address</th><th>User agent</th><th>Duration</th><th>Status</th></tr></thead><tbody>
+                    @foreach (var _item in _page.Items)
+                    {
+                        <tr @key="_item.Id">
+                            <td class="mono">@_item.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
+                            <td class="bt-request-route">@_item.Name</td>
+                            <td class="mono">@_item.Body</td>
+                            <td class="bt-request-context mono">@RequestAttribute(_item.DetailsJson, "blazor.circuit.id")</td>
+                            <td class="mono">@RequestAttribute(_item.AttributesJson, "client.address")</td>
+                            <td class="bt-request-context">@RequestAttribute(_item.AttributesJson, "user_agent.original")</td>
+                            <td class="mono">@(_item.DurationMs.HasValue ? $"{_item.DurationMs.Value:N1} ms" : _item.Body == "Blazor navigation" ? "—" : "In progress")</td>
+                            <td>@(_item.StatusCode?.ToString() ?? "—")</td>
+                        </tr>
+                    }
+                    </tbody></table>
                 }
                 else if (_activeView == "logs")
                 {
