@@ -75,6 +75,46 @@ public sealed class OtlpParserTests
     }
 
     [Fact]
+    public void ParseTracesProjectsServerSpansAsExternalRequests()
+    {
+        var request = new ExportTraceServiceRequest();
+        var resourceSpans = new ResourceSpans { Resource = CreateResource() };
+        var scopeSpans = new ScopeSpans();
+        scopeSpans.Spans.Add(new Span
+        {
+            Name = "GET /orders/{id}",
+            Kind = Span.Types.SpanKind.Server,
+            TraceId = ByteString.CopyFrom(Convert.FromHexString("00112233445566778899AABBCCDDEEFF")),
+            SpanId = ByteString.CopyFrom(Convert.FromHexString("0011223344556677")),
+            StartTimeUnixNano = 1_700_000_000_000_000_000,
+            EndTimeUnixNano = 1_700_000_000_125_000_000,
+            Attributes =
+            {
+                new KeyValue { Key = "url.full", Value = new AnyValue { StringValue = "https://shop.example.com/orders/42" } },
+                new KeyValue { Key = "http.request.method", Value = new AnyValue { StringValue = "GET" } },
+                new KeyValue { Key = "http.response.status_code", Value = new AnyValue { IntValue = 200 } },
+                new KeyValue { Key = "client.address", Value = new AnyValue { StringValue = "203.0.113.10" } },
+                new KeyValue { Key = "user_agent.original", Value = new AnyValue { StringValue = "External request agent" } }
+            }
+        });
+        resourceSpans.ScopeSpans.Add(scopeSpans);
+        request.ResourceSpans.Add(resourceSpans);
+
+        var items = _parser.ParseTraces(request, null);
+
+        Assert.Equal(2, items.Count);
+        Assert.Contains(items, item => item.Kind == TelemetryKind.Trace);
+        var externalRequest = Assert.Single(items, item => item.Kind == TelemetryKind.Request);
+        Assert.Equal("checkout", externalRequest.ServiceName);
+        Assert.Equal("https://shop.example.com/orders/42", externalRequest.Name);
+        Assert.Equal("GET", externalRequest.Body);
+        Assert.Equal(200, externalRequest.StatusCode);
+        Assert.Equal(125, externalRequest.DurationMs);
+        Assert.Contains("203.0.113.10", externalRequest.AttributesJson);
+        Assert.Contains("External request agent", externalRequest.AttributesJson);
+    }
+
+    [Fact]
     public void ParseMetricsPreservesGaugeValue()
     {
         var request = new ExportMetricsServiceRequest();
