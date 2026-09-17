@@ -27,6 +27,7 @@
     private TelemetryItem? _selectedLog;
     private TelemetryItem? _selectedSpan;
     private readonly HashSet<long> _collapsedSpans = [];
+    private readonly HashSet<string> _expandedTraces = [];
     private ElementReference _spanCloseButton;
     private ElementReference _spanContent;
     private bool _focusSpanDrawer;
@@ -137,6 +138,7 @@
         _selectedLog = null;
         _selectedSpan = null;
         _collapsedSpans.Clear();
+        _expandedTraces.Clear();
         await Refresh();
     }
 
@@ -211,6 +213,14 @@
         if (!_collapsedSpans.Add(_id))
         {
             _collapsedSpans.Remove(_id);
+        }
+    }
+
+    private void ToggleTrace(string traceKey)
+    {
+        if (!_expandedTraces.Add(traceKey))
+        {
+            _expandedTraces.Remove(traceKey);
         }
     }
 
@@ -372,7 +382,24 @@
         }
     }
     private static string ShortId(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value.Length <= 10 ? value : value[..10];
-    private static string SeverityClass(TelemetryItem item) => (item.SeverityNumber ?? 0) >= 17 || item.StatusCode == 2 ? "danger" : (item.SeverityNumber ?? 0) >= 13 ? "warning" : "neutral";
+    private static string SeverityClass(TelemetryItem item)
+    {
+        if (item.StatusCode == 2)
+        {
+            return "error";
+        }
+
+        return (item.SeverityNumber ?? 0) switch
+        {
+            >= 21 => "critical",
+            >= 17 => "error",
+            >= 13 => "warning",
+            >= 9 => "information",
+            >= 5 => "debug",
+            >= 1 => "trace",
+            _ => item.StatusCode == 1 ? "success" : "neutral"
+        };
+    }
     private static (int? Minimum, int? Maximum) LogSeverityRange(string level) => level switch
     {
         "trace" => (1, 4),
@@ -408,10 +435,10 @@
         </div>
         <nav aria-label="Telemetry navigation">
             <button class="@(_activeView == "summary" ? "active" : null)" @onclick='() => SelectView("summary")'><span class="bt-nav-icon" aria-hidden="true">space_dashboard</span>Overview</button>
+            <button class="@(_activeView == "dashboards" ? "active" : null)" @onclick='() => SelectView("dashboards")'><span class="bt-nav-icon" aria-hidden="true">dashboard</span>Dashboards</button>
             <button class="@(_activeView == "logs" ? "active" : null)" @onclick='() => SelectView("logs")'><span class="bt-nav-icon" aria-hidden="true">description</span>Logs</button>
             <button class="@(_activeView == "traces" ? "active" : null)" @onclick='() => SelectView("traces")'><span class="bt-nav-icon" aria-hidden="true">account_tree</span>Traces</button>
             <button class="@(_activeView == "metrics" ? "active" : null)" @onclick='() => SelectView("metrics")'><span class="bt-nav-icon" aria-hidden="true">query_stats</span>Metrics</button>
-            <button class="@(_activeView == "dashboards" ? "active" : null)" @onclick='() => SelectView("dashboards")'><span class="bt-nav-icon" aria-hidden="true">dashboard</span>Dashboards</button>
             <button class="@(_activeView == "alerts" ? "active" : null)" @onclick='() => SelectView("alerts")'><span class="bt-nav-icon" aria-hidden="true">notifications</span>Alerts @if (_summary.ActiveIncidents > 0) { <b>@_summary.ActiveIncidents</b> }</button>
             <button class="@(_activeView == "admin" ? "active" : null)" @onclick='() => SelectView("admin")'><span class="bt-nav-icon" aria-hidden="true">admin_panel_settings</span>Administration</button>
         </nav>
@@ -536,8 +563,10 @@
                         var _start = _trace.Min(_item => _item.TimestampUtc);
                         var _duration = _trace.Max(_item => (_item.TimestampUtc - _start).TotalMilliseconds + SpanDuration(_item));
                         var _rows = TraceRows(_trace).ToArray();
+                        var _isExpanded = _expandedTraces.Contains(_trace.Key);
                         <section class="bt-trace-group" @key="_trace.Key" aria-label="Trace @_trace.Key">
                             <header class="bt-trace-summary">
+                                <button class="bt-trace-toggle" type="button" aria-label="@(_isExpanded ? "Collapse" : "Expand") trace @ShortId(_trace.First().TraceId)" aria-expanded="@_isExpanded" @onclick="() => ToggleTrace(_trace.Key)"><span class="bt-nav-icon" aria-hidden="true">@(_isExpanded ? "expand_more" : "chevron_right")</span></button>
                                 <strong>Trace <code>@ShortId(_trace.First().TraceId)</code></strong>
                                 <span>@FormatTime(_start)</span><span>Duration <b>@TraceNumber(_duration) ms</b></span>
                                 <span>Resources <b>@_trace.Select(_item => _item.ServiceName).Distinct().Count()</b></span>
@@ -547,6 +576,8 @@
                                     <button class="bt-link" @onclick="() => SelectTrace(_trace.First().TraceId)">Focus trace</button>
                                 }
                             </header>
+                            @if (_isExpanded)
+                            {
                             <div class="bt-trace-scroll">
                                 <div class="bt-trace-columns"><span>Name</span><span>Resource</span><div class="bt-trace-axis">@for (var _tick = 0; _tick <= 4; _tick++) { <span>@TraceNumber(_duration * _tick / 4) ms</span> }</div><span>Duration</span></div>
                                 @foreach (var _row in _rows)
@@ -567,6 +598,7 @@
                                     </div>
                                 }
                             </div>
+                            }
                         </section>
                     }
                     </div>
