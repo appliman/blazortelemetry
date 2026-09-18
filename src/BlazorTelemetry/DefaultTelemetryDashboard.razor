@@ -11,6 +11,12 @@
     [Parameter, EditorRequired]
     public IReadOnlyList<TelemetryItem> Metrics { get; set; } = [];
 
+    [Parameter, EditorRequired]
+    public DashboardBreakdown Breakdown { get; set; } = DashboardBreakdown.Empty;
+
+    private static readonly string[] HTTP_METHOD_ORDER = ["GET", "POST", "HEAD", "PATCH", "PUT", "DELETE", "OPTIONS"];
+    private static readonly string[] ENTITY_FRAMEWORK_OPERATION_ORDER = ["read", "insert", "update", "delete"];
+
     private IReadOnlyList<TelemetryItem> TimedTraces => Traces.Where(item => item.DurationMs.HasValue).OrderBy(item => item.TimestampUtc).ToArray();
     private IReadOnlyList<ChartPoint> RequestDuration => TimedTraces.TakeLast(40).Select(item => new ChartPoint(item.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), item.DurationMs!.Value)).ToArray();
     private IReadOnlyList<ChartPoint> ErrorRate => BuildErrorRate();
@@ -34,6 +40,16 @@
     private IReadOnlyList<CountEntry> ErrorEndpoints => Traces.Where(item => item.StatusCode == 2).GroupBy(EndpointName).Select(group => new CountEntry(group.Key, group.LongCount())).Concat(Logs.Where(IsError).GroupBy(EndpointName).Select(group => new CountEntry(group.Key, group.LongCount()))).GroupBy(item => item.Name).Select(group => new CountEntry(group.Key, group.Sum(item => item.Count))).OrderByDescending(item => item.Count).Take(10).ToArray();
     private ProtocolBreakdown Security => BuildBreakdown("https", "http", IsSecure);
     private IReadOnlyList<CountEntry> Protocols => BuildProtocols();
+    private IReadOnlyList<CountEntry> HttpMethods => BuildHttpMethods();
+    private IReadOnlyList<CountEntry> HttpStatuses => Breakdown.HttpStatuses
+        .OrderBy(item => item.Key)
+        .Select(item => new CountEntry(item.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), item.Value))
+        .ToArray();
+    private IReadOnlyList<CountEntry> EntityFrameworkOperations => Breakdown.EntityFrameworkOperations.Count == 0
+        ? []
+        : ENTITY_FRAMEWORK_OPERATION_ORDER
+            .Select(operation => new CountEntry(ToTitleCase(operation), Breakdown.EntityFrameworkOperations.GetValueOrDefault(operation)))
+            .ToArray();
     private double MaxEndpointCount => Math.Max(1, Endpoints.FirstOrDefault()?.Count ?? 1);
     private double MaxErrorEndpointCount => Math.Max(1, ErrorEndpoints.FirstOrDefault()?.Count ?? 1);
 
@@ -224,6 +240,24 @@
         return protocols.Count > 0 ? protocols : [new CountEntry("HTTP/1.0", 0), new CountEntry("HTTP/1.1", 0), new CountEntry("HTTP/2", 0)];
     }
 
+    private IReadOnlyList<CountEntry> BuildHttpMethods()
+    {
+        if (Breakdown.HttpMethods.Count == 0)
+        {
+            return [];
+        }
+
+        return HTTP_METHOD_ORDER
+            .Concat(Breakdown.HttpMethods.Keys.Where(method => !HTTP_METHOD_ORDER.Contains(method, StringComparer.OrdinalIgnoreCase)).OrderBy(method => method))
+            .Select(method => new CountEntry(method, Breakdown.HttpMethods.GetValueOrDefault(method)))
+            .ToArray();
+    }
+
+    private static string ToTitleCase(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? value : $"{char.ToUpperInvariant(value[0])}{value[1..].ToLowerInvariant()}";
+    }
+
     private static string NormalizeProtocol(string value) => value.ToLowerInvariant() switch
     {
         "1.0" or "http/1.0" => "HTTP/1.0",
@@ -296,6 +330,24 @@
                 <div>@foreach (var protocol in Protocols) { <section><span>@protocol.Name</span><strong>@protocol.Count.ToString("N0")</strong></section> }</div>
             </article>
         </div>
+    </div>
+
+    <div class="bt-dashboard-distributions">
+        <article class="bt-monitor-card bt-distribution-card">
+            <header><h2>HTTP methods</h2><span>@HttpMethods.Sum(item => item.Count).ToString("N0") requests</span></header>
+            @if (HttpMethods.Count == 0) { <div class="bt-no-data distribution-empty">No HTTP request data</div> }
+            else { <TelemetryChart Labels="HttpMethods.Select(item => item.Name).ToArray()" Values="HttpMethods.Select(item => (double)item.Count).ToArray()" Type="bar" ShowValues="true" SeriesLabel="Requests" Color="#78a9ff" Height="235" AriaLabel="HTTP request count by method" /> }
+        </article>
+        <article class="bt-monitor-card bt-distribution-card">
+            <header><h2>HTTP status codes</h2><span>@HttpStatuses.Sum(item => item.Count).ToString("N0") responses</span></header>
+            @if (HttpStatuses.Count == 0) { <div class="bt-no-data distribution-empty">No HTTP status data</div> }
+            else { <TelemetryChart Labels="HttpStatuses.Select(item => item.Name).ToArray()" Values="HttpStatuses.Select(item => (double)item.Count).ToArray()" Type="bar" ShowValues="true" SeriesLabel="Responses" Color="#76e4b8" Height="235" AriaLabel="HTTP response count by status code" /> }
+        </article>
+        <article class="bt-monitor-card bt-distribution-card">
+            <header><h2>Entity Framework operations</h2><span>@EntityFrameworkOperations.Sum(item => item.Count).ToString("N0") commands</span></header>
+            @if (EntityFrameworkOperations.Count == 0) { <div class="bt-no-data distribution-empty">No Entity Framework metrics</div> }
+            else { <TelemetryChart Labels="EntityFrameworkOperations.Select(item => item.Name).ToArray()" Values="EntityFrameworkOperations.Select(item => (double)item.Count).ToArray()" Type="bar" ShowValues="true" SeriesLabel="Commands" Color="#c792ea" Height="235" AriaLabel="Entity Framework command count by operation" /> }
+        </article>
     </div>
 
     <div class="bt-dashboard-resources">

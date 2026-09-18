@@ -1,13 +1,10 @@
 using BlazorTelemetry.AspNetCore;
+using BlazorTelemetry.Client;
 using BlazorTelemetry.Demo;
 using BlazorTelemetry.Demo.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using OpenTelemetry.Exporter;
-using OpenTelemetry.Logs;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -26,20 +23,15 @@ builder.Services.AddSingleton<DemoTelemetryService>();
 builder.Services.AddHttpClient("demo-api", client => client.BaseAddress = new Uri(builder.Configuration["DemoApiUrl"] ?? "http://localhost:5188"));
 
 var otlpEndpoint = new Uri(builder.Configuration["OtlpEndpoint"] ?? "http://localhost:5279");
-var resource = ResourceBuilder.CreateDefault().AddService("BlazorTelemetry.Demo", serviceVersion: "1.0.1").AddAttributes([new("deployment.environment.name", builder.Environment.EnvironmentName)]);
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(resourceBuilder => resourceBuilder.AddService("BlazorTelemetry.Demo", serviceVersion: "1.0.1"))
-    .WithTracing(tracing => tracing
-        .AddSource(DemoTelemetryService.ACTIVITY_SOURCE_NAME)
-        .AddHttpClientInstrumentation(options => options.FilterHttpRequestMessage = request => !IsOtlpRequest(request.RequestUri))
-        .AddOtlpExporter(options => ConfigureExporter(options, otlpEndpoint, "v1/traces")))
-    .WithMetrics(metrics => metrics.AddMeter(DemoTelemetryService.METER_NAME).AddRuntimeInstrumentation().AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddOtlpExporter(options => ConfigureExporter(options, otlpEndpoint, "v1/metrics")));
-builder.Logging.AddOpenTelemetry(logging =>
+builder.Services.AddBlazorTelemetry(options =>
 {
-    logging.IncludeFormattedMessage = true;
-    logging.IncludeScopes = true;
-    logging.SetResourceBuilder(resource);
-    logging.AddOtlpExporter(options => ConfigureExporter(options, otlpEndpoint, "v1/logs"));
+    options.ServiceName = "BlazorTelemetry.Demo";
+    options.ServiceVersion = "1.0.1";
+    options.DeploymentEnvironment = builder.Environment.EnvironmentName;
+    options.Endpoint = otlpEndpoint;
+    options.Protocol = OtlpExportProtocol.HttpProtobuf;
+    options.AddSource(DemoTelemetryService.ACTIVITY_SOURCE_NAME);
+    options.AddMeter(DemoTelemetryService.METER_NAME);
 });
 builder.Logging.AddFilter("BlazorTelemetry.AspNetCore", LogLevel.Warning);
 builder.Logging.AddFilter("BlazorTelemetry.Sqlite", LogLevel.Warning);
@@ -62,11 +54,3 @@ app.MapStaticAssets();
 app.MapBlazorTelemetry();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode().AddAdditionalAssemblies(typeof(BlazorTelemetry.TelemetryDashboard).Assembly);
 app.Run();
-
-static void ConfigureExporter(OtlpExporterOptions options, Uri endpoint, string signalPath)
-{
-    options.Endpoint = new Uri($"{endpoint.AbsoluteUri.TrimEnd('/')}/{signalPath}");
-    options.Protocol = OtlpExportProtocol.HttpProtobuf;
-}
-
-static bool IsOtlpRequest(Uri? uri) => uri?.AbsolutePath.StartsWith("/v1/", StringComparison.Ordinal) == true;

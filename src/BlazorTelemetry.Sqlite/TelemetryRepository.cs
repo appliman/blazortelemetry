@@ -1,5 +1,6 @@
 using BlazorTelemetry.Core;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace BlazorTelemetry.Sqlite;
 
@@ -180,6 +181,71 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
         return new(logs, traces, metrics, errors, p95, activeIncidents, oldest, newest, services);
     }
 
+    public async Task<DashboardBreakdown> GetDashboardBreakdown(
+        DateTimeOffset fromUtc,
+        string? serviceName,
+        string? excludedRequestServiceName,
+        CancellationToken cancellationToken)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var requests = context.TelemetryItems.AsNoTracking()
+            .Where(item => item.Kind == TelemetryKind.Request && item.TimestampUtc >= fromUtc);
+        var entityFrameworkMetrics = context.TelemetryItems.AsNoTracking()
+            .Where(item => item.Kind == TelemetryKind.Metric
+                && item.Name == "blazortelemetry.entity_framework.commands"
+                && item.TimestampUtc >= fromUtc
+                && item.NumericValue.HasValue);
+
+        if (!string.IsNullOrWhiteSpace(serviceName))
+        {
+            requests = requests.Where(item => item.ServiceName == serviceName);
+            entityFrameworkMetrics = entityFrameworkMetrics.Where(item => item.ServiceName == serviceName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(excludedRequestServiceName))
+        {
+            requests = requests.Where(item => item.ServiceName != excludedRequestServiceName);
+        }
+
+        var methodRows = await requests
+            .Where(item => item.Body != null && item.Body != string.Empty)
+            .GroupBy(item => item.Body!)
+            .Select(group => new { Method = group.Key, Count = group.LongCount() })
+            .ToListAsync(cancellationToken);
+        var statusRows = await requests
+            .Where(item => item.StatusCode.HasValue)
+            .GroupBy(item => item.StatusCode!.Value)
+            .Select(group => new { Status = group.Key, Count = group.LongCount() })
+            .ToListAsync(cancellationToken);
+        var metricRows = await entityFrameworkMetrics
+            .Select(item => new
+            {
+                item.ServiceName,
+                item.ResourceAttributesJson,
+                item.AttributesJson,
+                item.TimestampUtc,
+                Value = item.NumericValue!.Value
+            })
+            .ToListAsync(cancellationToken);
+
+        var methods = methodRows
+            .GroupBy(item => item.Method.Trim().ToUpperInvariant(), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Sum(item => item.Count), StringComparer.OrdinalIgnoreCase);
+        var statuses = statusRows.ToDictionary(item => item.Status, item => item.Count);
+        var operations = metricRows
+            .GroupBy(item => new { item.ServiceName, item.ResourceAttributesJson, item.AttributesJson })
+            .Select(group => group.MaxBy(item => item.TimestampUtc)!)
+            .Select(item => new { Operation = ReadMetricAttribute(item.AttributesJson, "db.operation.type"), item.Value })
+            .Where(item => item.Operation is not null)
+            .GroupBy(item => item.Operation!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Sum(item => Convert.ToInt64(Math.Max(0, item.Value), System.Globalization.CultureInfo.InvariantCulture)),
+                StringComparer.OrdinalIgnoreCase);
+
+        return new DashboardBreakdown(methods, statuses, operations);
+    }
+
     public async Task<IReadOnlyDictionary<string, long>> GetErrorCountsByService(
         DateTimeOffset fromUtc,
         string? serviceName,
@@ -321,5 +387,18 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             """;
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string? ReadMetricAttribute(string json, string name)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty(name, out var value) ? value.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }

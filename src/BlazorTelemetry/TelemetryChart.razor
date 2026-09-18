@@ -30,12 +30,21 @@
     public string Unit { get; set; } = string.Empty;
 
     [Parameter]
+    public string Type { get; set; } = "line";
+
+    [Parameter]
+    public bool ShowValues { get; set; }
+
+    [Parameter]
+    public string AriaLabel { get; set; } = "Time series trend";
+
+    [Parameter]
     public int Height { get; set; } = 220;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/BlazorTelemetry/telemetry-chart.js");
-        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, SecondaryValues, SeriesLabel, SecondarySeriesLabel, Color, SecondaryColor, Unit);
+        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, SecondaryValues, SeriesLabel, SecondarySeriesLabel, Color, SecondaryColor, Unit, Type, ShowValues);
     }
 
     public async ValueTask DisposeAsync()
@@ -57,4 +66,4 @@
     }
 }
 
-<div id="@_elementId" class="telemetry-chart" style="height: @(Height)px" role="img" aria-label="Time series trend"></div>
+<div id="@_elementId" class="telemetry-chart" style="height: @(Height)px" role="img" aria-label="@AriaLabel"></div>

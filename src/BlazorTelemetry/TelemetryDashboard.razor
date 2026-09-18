@@ -42,6 +42,7 @@
     private IReadOnlyList<TelemetryItem> _dashboardTraces = [];
     private IReadOnlyList<TelemetryItem> _dashboardLogs = [];
     private IReadOnlyList<TelemetryItem> _dashboardMetrics = [];
+    private DashboardBreakdown _dashboardBreakdown = DashboardBreakdown.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -116,11 +117,13 @@
                 var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
                 var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
                 var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
-                await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask);
+                var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _service, null, _lifetime.Token);
+                await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask);
                 _dashboards = await dashboardsTask;
                 _dashboardTraces = (await tracesTask).Items;
                 _dashboardLogs = (await logsTask).Items;
                 _dashboardMetrics = (await metricsTask).Items;
+                _dashboardBreakdown = await breakdownTask;
             }
         }
         catch (Exception exception)
@@ -186,6 +189,8 @@
         _service = null;
         _search = string.Empty;
         _collapsedSpans.Clear();
+        _expandedTraces.Clear();
+        _expandedTraces.Add(traceId);
         _activeView = "traces";
         await Refresh();
     }
@@ -430,6 +435,23 @@
         }
     }
 
+    private static string RequestIp(TelemetryItem item)
+    {
+        foreach (var key in new[] { "client.address", "network.peer.address", "http.client_ip", "net.sock.peer.addr", "net.peer.ip" })
+        {
+            var value = RequestAttribute(item.AttributesJson, key);
+            if (value != "—")
+            {
+                return value;
+            }
+        }
+
+        return "—";
+    }
+
+    private static bool HasCorrelatedTrace(TelemetryItem item) =>
+        !string.IsNullOrWhiteSpace(item.TraceId) && !string.IsNullOrWhiteSpace(item.SpanId);
+
     public async ValueTask DisposeAsync()
     {
         _lifetime.Cancel();
@@ -566,17 +588,26 @@
                 }
                 else if (_activeView == "requests")
                 {
-                    <p class="bt-result-count">HTTP duration covers server processing. Blazor navigation identifies circuit activity without an HTTP request. Initial HTTP and SSR requests have no circuit yet. In progress means no HTTP completion has been recorded yet.</p>
-                    <table class="bt-requests-table"><thead><tr><th>Date / time</th><th>Route</th><th>Method</th><th>Blazor session</th><th>IP address</th><th>User agent</th><th>Duration</th><th>Status</th></tr></thead><tbody>
+                    <p class="bt-result-count">HTTP duration covers server processing. Blazor navigation identifies circuit activity without an HTTP request. In progress means no HTTP completion has been recorded yet.</p>
+                    <table class="bt-requests-table"><thead><tr><th>Date / time</th><th>Route</th><th>Method</th><th>IP address</th><th>User agent</th><th>Trace</th><th>Duration</th><th>Status</th></tr></thead><tbody>
                     @foreach (var _item in _page.Items)
                     {
                         <tr @key="_item.Id">
                             <td class="mono">@_item.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
                             <td class="bt-request-route">@_item.Name</td>
                             <td class="mono">@_item.Body</td>
-                            <td class="bt-request-context mono">@RequestAttribute(_item.DetailsJson, "blazor.circuit.id")</td>
-                            <td class="mono">@RequestAttribute(_item.AttributesJson, "client.address")</td>
+                            <td class="mono">@RequestIp(_item)</td>
                             <td class="bt-request-context">@RequestAttribute(_item.AttributesJson, "user_agent.original")</td>
+                            <td class="bt-request-trace mono">
+                                @if (HasCorrelatedTrace(_item))
+                                {
+                                    <button class="bt-link" title="Open trace @_item.TraceId" @onclick="() => SelectTrace(_item.TraceId)">@ShortId(_item.TraceId)</button>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </td>
                             <td class="mono">@(_item.DurationMs.HasValue ? $"{_item.DurationMs.Value:N1} ms" : _item.Body == "Blazor navigation" ? "—" : "In progress")</td>
                             <td>@(_item.StatusCode?.ToString() ?? "—")</td>
                         </tr>
@@ -687,7 +718,7 @@
         }
         else if (_activeView == "dashboards")
         {
-            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" />
+            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" />
             <div class="bt-saved-dashboard-heading"><div><h2>Shared dashboards</h2><p>Additional views saved by the team</p></div><AuthorizeView Policy="@Options.AdministratorPolicy" Context="authorizationContext"><button class="bt-primary" @onclick="CreateDashboard">New dashboard</button></AuthorizeView></div>
             <div class="bt-dashboard-grid bt-saved-dashboard-grid">
                 @foreach (var dashboard in _dashboards)

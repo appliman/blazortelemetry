@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.0.10.0</Version>
+    <AssemblyName>BlazorTelemetryClient</AssemblyName>
+    <RootNamespace>BlazorTelemetry.Client</RootNamespace>
+
+    <PackageId>BlazorTelemetryClient</PackageId>
+    <Title>BlazorTelemetryClient</Title>
+    <Authors>Appliman</Authors>
+    <Company>Appliman</Company>
+    <Description>Preconfigured and extensible OpenTelemetry instrumentation for ASP.NET Core and Blazor applications, including logs, traces, HTTP metrics, client network attributes, runtime metrics, and Entity Framework operation metrics.</Description>
+    <Copyright>© $([System.DateTime]::Now.Year) Appliman</Copyright>
+    <PackageTags>blazor;aspnetcore;opentelemetry;otlp;observability;telemetry;logs;traces;metrics;entity-framework;http</PackageTags>
+    <PackageProjectUrl>https://github.com/appliman/blazortelemetry</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/appliman/blazortelemetry.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReleaseNotes>https://github.com/appliman/blazortelemetry/releases</PackageReleaseNotes>
+
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.EntityFrameworkCore" Version="1.18.0-beta.1" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

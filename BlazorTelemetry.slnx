@@ -7,4 +7,6 @@
   <Project Path="src/BlazorTelemetry.Sqlite/BlazorTelemetry.Sqlite.csproj" />
   <Project Path="src/BlazorTelemetry.Tests/BlazorTelemetry.Tests.csproj" />
   <Project Path="src/BlazorTelemetry/BlazorTelemetry.csproj" />
+  <Project Path="src/BlazorTelemetryClient/BlazorTelemetryClient.csproj" />
+  <Project Path="src/BlazorTelemetryClient.ChannelMediator/BlazorTelemetryClient.ChannelMediator.csproj" />
 </Solution>
