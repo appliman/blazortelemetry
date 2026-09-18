@@ -231,6 +231,47 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BlazorDashboardMetricsAggregateCircuitCountersRatesAndHistogramPercentiles()
+    {
+        var repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var now = DateTimeOffset.UtcNow;
+        await repository.Store([
+            CreateMetric(now.AddSeconds(-30), "aspnetcore.components.circuit.active", 4, "sum", "{circuit}"),
+            CreateMetric(now.AddSeconds(-10), "aspnetcore.components.circuit.active", 5, "sum", "{circuit}"),
+            CreateMetric(now.AddSeconds(-30), "aspnetcore.components.circuit.connected", 2, "sum", "{circuit}"),
+            CreateMetric(now.AddSeconds(-10), "aspnetcore.components.circuit.connected", 3, "sum", "{circuit}"),
+            CreateMetric(now.AddSeconds(-30), "aspnetcore.components.navigation", 10, "sum", "{route}", "{\"aspnetcore.components.route\":\"/orders\",\"aspnetcore.components.type\":\"Orders\"}"),
+            CreateMetric(now.AddSeconds(-10), "aspnetcore.components.navigation", 14, "sum", "{route}", "{\"aspnetcore.components.route\":\"/orders\",\"aspnetcore.components.type\":\"Orders\"}"),
+            CreateMetric(now.AddSeconds(-10), "aspnetcore.components.navigation", 1, "sum", "{route}", "{\"aspnetcore.components.route\":\"/orders\",\"aspnetcore.components.type\":\"Orders\",\"error.type\":\"System.InvalidOperationException\"}"),
+            CreateHistogram(now.AddSeconds(-30), "aspnetcore.components.event_handler", 0.3, 2, [0.1, 0.5, 1], [1, 1, 0, 0], "{\"aspnetcore.components.type\":\"OrderList\",\"aspnetcore.components.method\":\"Refresh\",\"aspnetcore.components.attribute.name\":\"onclick\"}"),
+            CreateHistogram(now.AddSeconds(-10), "aspnetcore.components.event_handler", 1.5, 5, [0.1, 0.5, 1], [1, 3, 1, 0], "{\"aspnetcore.components.type\":\"OrderList\",\"aspnetcore.components.method\":\"Refresh\",\"aspnetcore.components.attribute.name\":\"onclick\"}"),
+            CreateHistogram(now.AddSeconds(-10), "aspnetcore.components.update_parameters", 0.2, 2, [0.05, 0.1], [0, 1, 1], "{\"aspnetcore.components.type\":\"OrderList\"}"),
+            CreateHistogram(now.AddSeconds(-10), "aspnetcore.components.render_diff", 0.08, 2, [0.02, 0.05], [1, 1, 0], "{\"aspnetcore.components.diff.length\":\"50\"}"),
+            CreateHistogram(now.AddSeconds(-10), "aspnetcore.components.circuit.duration", 30, 2, [10, 20], [0, 1, 1], "{}")
+        ], CancellationToken.None);
+
+        var dashboard = await repository.GetBlazorDashboardMetrics(now.AddMinutes(-1), "web", CancellationToken.None);
+
+        Assert.Equal(5, dashboard.ActiveCircuits);
+        Assert.Equal(3, dashboard.ConnectedCircuits);
+        Assert.Equal(5, dashboard.Navigations);
+        Assert.Equal(1, dashboard.Errors);
+        Assert.Equal(1_000, dashboard.EventHandlerP95Ms);
+        Assert.Equal(100, dashboard.ComponentUpdateP95Ms);
+        Assert.Equal(50, dashboard.RenderDiffP95Ms);
+        Assert.Equal(20_000, dashboard.CircuitDurationP95Ms);
+        var route = Assert.Single(dashboard.TopRoutes);
+        Assert.Equal("/orders", route.Route);
+        Assert.Equal(5, route.Navigations);
+        Assert.Equal(1, route.Errors);
+        var handler = Assert.Single(dashboard.SlowestEventHandlers);
+        Assert.Equal("Refresh", handler.Method);
+        Assert.Equal(3, handler.Invocations);
+        Assert.Equal(400, handler.AverageDurationMs, 3);
+        Assert.Equal(1_000, handler.P95DurationMs);
+    }
+
+    [Fact]
     public async Task DatabaseInitializerCreatesDefaultPerApplicationErrorRule()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-default-rule-{Guid.NewGuid():N}.db");
@@ -364,6 +405,49 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
             File.Delete(_databasePath);
         }
         return Task.CompletedTask;
+    }
+
+    private static TelemetryItem CreateMetric(
+        DateTimeOffset timestamp,
+        string name,
+        double value,
+        string type,
+        string unit,
+        string attributes = "{}")
+    {
+        return new TelemetryItem
+        {
+            Kind = TelemetryKind.Metric,
+            TimestampUtc = timestamp,
+            ObservedUtc = timestamp,
+            ServiceName = "web",
+            Name = name,
+            NumericValue = value,
+            MetricType = type,
+            Unit = unit,
+            ResourceAttributesJson = "{\"service.instance.id\":\"web-1\"}",
+            AttributesJson = attributes,
+            DetailsJson = "{}"
+        };
+    }
+
+    private static TelemetryItem CreateHistogram(
+        DateTimeOffset timestamp,
+        string name,
+        double sum,
+        long count,
+        IReadOnlyList<double> bounds,
+        IReadOnlyList<long> buckets,
+        string attributes)
+    {
+        var details = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            scope = "Microsoft.AspNetCore.Components",
+            data = new { count, sum, min = 0d, max = bounds.LastOrDefault(), bounds, buckets }
+        });
+        var item = CreateMetric(timestamp, name, sum, "histogram", "s", attributes);
+        item.DetailsJson = details;
+        return item;
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<TelemetryDbContext> options) : IDbContextFactory<TelemetryDbContext>

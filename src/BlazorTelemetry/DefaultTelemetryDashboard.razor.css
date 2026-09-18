@@ -36,6 +36,43 @@
 .bt-split-card.protocols section { background: #9d4bc8; }
 .bt-split-card span { overflow: hidden; text-overflow: ellipsis; color: #fff; font-size: 11px; white-space: nowrap; }
 .bt-split-card strong { font-size: 27px; font-weight: 570; font-variant-numeric: tabular-nums; }
+.bt-blazor-section { display: grid; gap: 8px; padding: 14px; background: #10151a; border: 1px solid #343c45; border-radius: 12px; }
+.bt-blazor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.bt-blazor-heading h2 { margin: 0; color: #f1f6f9; font-size: 16px; font-weight: 680; }
+.bt-blazor-heading p { margin: 4px 0 0; color: #9ba8b2; font-size: 11px; }
+.bt-blazor-heading > span { padding: 4px 8px; color: #a8b3bc; background: #20262c; border-radius: 4px; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.bt-blazor-heading > span.available { color: #aef0d2; background: #16372d; }
+.bt-blazor-empty { min-height: 112px; display: grid; align-content: center; justify-items: center; gap: 5px; color: #dfe7ec; text-align: center; }
+.bt-blazor-empty span { color: #9ba8b2; font-size: 12px; }
+.bt-blazor-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.bt-blazor-kpis article { min-width: 0; min-height: 108px; padding: 13px 14px; display: flex; flex-direction: column; background: #151a1f; border: 1px solid #343c45; border-radius: 10px; }
+.bt-blazor-kpis span { color: #aab5be; font-size: 11px; font-weight: 640; }
+.bt-blazor-kpis strong { margin: auto 0; color: #76e4b8; font-size: 30px; font-weight: 590; font-variant-numeric: tabular-nums; }
+.bt-blazor-kpis small { overflow: hidden; color: #8f9ba5; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.bt-blazor-kpis article.has-error strong { color: #ff8f87; }
+.bt-blazor-insights, .bt-blazor-rankings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bt-blazor-circuits, .bt-blazor-performance { min-height: 286px; }
+.bt-blazor-performance dl { margin: 0; padding: 2px 14px 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bt-blazor-performance dl div { min-height: 91px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; background: #20262c; border-radius: 7px; }
+.bt-blazor-performance dt { color: #9eabb5; font-size: 11px; }
+.bt-blazor-performance dd { margin: 0; color: #dfe7ec; font-size: 23px; font-weight: 570; font-variant-numeric: tabular-nums; }
+.bt-blazor-rankings .bt-monitor-card { min-height: 280px; }
+.bt-blazor-table { padding: 0 10px 10px; scrollbar-color: #62717d #20262c; scrollbar-width: thin; }
+.bt-blazor-table::-webkit-scrollbar { height: 7px; }
+.bt-blazor-table::-webkit-scrollbar-track { background: #20262c; }
+.bt-blazor-table::-webkit-scrollbar-thumb { background: #62717d; border-radius: 4px; }
+.bt-blazor-table .heading, .bt-blazor-table .row { min-height: 38px; display: grid; align-items: center; gap: 10px; border-bottom: 1px solid #343c45; }
+.bt-blazor-table.routes .heading, .bt-blazor-table.routes .row { grid-template-columns: minmax(130px, 1.2fr) minmax(120px, 1fr) 55px 48px; }
+.bt-blazor-table.handlers .heading, .bt-blazor-table.handlers .row { grid-template-columns: minmax(150px, 1.3fr) 70px 72px 48px; }
+.bt-blazor-table .heading { color: #8e99a4; font-size: 10px; font-weight: 650; }
+.bt-blazor-table .row > span, .bt-blazor-table .row > code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-blazor-table .row > span { color: #c8d1d7; font-size: 11px; }
+.bt-blazor-table code { color: #78a9ff; font-size: 11px; }
+.bt-blazor-table .row > strong { color: #dfe7ec; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.bt-blazor-table .row > strong.danger { color: #ff8f87; }
+.bt-blazor-table.handlers .row > span { display: flex; flex-direction: column; gap: 2px; }
+.bt-blazor-table.handlers .row > span strong { overflow: hidden; color: #dfe7ec; font-size: 11px; text-overflow: ellipsis; }
+.bt-blazor-table.handlers .row > span small { overflow: hidden; color: #87949e; font-size: 9px; text-overflow: ellipsis; }
 .bt-dashboard-tables .bt-monitor-card { min-height: 255px; }
 .bt-ranking { padding: 0 9px 10px; }
 .bt-ranking .heading, .bt-ranking .row { min-height: 35px; display: grid; grid-template-columns: minmax(200px, 1.45fr) minmax(130px, .8fr) 48px; align-items: center; gap: 8px; border-bottom: 1px solid #343c45; }
@@ -49,12 +86,14 @@
 
 @media (max-width: 1180px) {
     .bt-dashboard-secondary { grid-template-columns: 1fr; }
+    .bt-blazor-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .bt-dashboard-distributions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .bt-dashboard-distributions .bt-distribution-card:last-child { grid-column: 1 / -1; }
 }
 
 @media (max-width: 820px) {
     .bt-dashboard-primary, .bt-dashboard-distributions, .bt-dashboard-resources, .bt-dashboard-tables { grid-template-columns: 1fr; }
+    .bt-blazor-insights, .bt-blazor-rankings { grid-template-columns: 1fr; }
     .bt-dashboard-distributions .bt-distribution-card:last-child { grid-column: auto; }
 }
 
@@ -62,6 +101,17 @@
     .bt-default-dashboard { padding: 6px; gap: 6px; }
     .bt-dashboard-primary, .bt-dashboard-secondary, .bt-dashboard-distributions, .bt-dashboard-resources, .bt-dashboard-tables, .bt-live-charts, .bt-kpi-grid { gap: 6px; }
     .bt-live-charts, .bt-kpi-grid { grid-template-columns: 1fr; }
+    .bt-blazor-section { padding: 11px; }
+    .bt-blazor-heading { align-items: stretch; flex-direction: column; gap: 9px; }
+    .bt-blazor-heading > span { align-self: flex-start; }
+    .bt-blazor-kpis { grid-template-columns: 1fr; }
+    .bt-blazor-kpis article { min-height: 102px; }
+    .bt-blazor-performance dl { grid-template-columns: 1fr; }
+    .bt-blazor-table { overflow-x: auto; }
+    .bt-blazor-rankings .bt-monitor-card { min-height: auto; }
+    .bt-blazor-rankings .bt-no-data.table-empty { min-height: 145px; }
+    .bt-blazor-table.routes .heading, .bt-blazor-table.routes .row { min-width: 560px; }
+    .bt-blazor-table.handlers .heading, .bt-blazor-table.handlers .row { min-width: 560px; }
     .bt-kpi-grid { grid-template-rows: repeat(4, auto); }
     .bt-kpi-card { min-height: 120px; }
     .bt-ranking .heading, .bt-ranking .row { grid-template-columns: minmax(150px, 1fr) minmax(90px, .65fr) 38px; }

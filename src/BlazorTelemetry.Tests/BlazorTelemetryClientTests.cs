@@ -68,6 +68,11 @@ public sealed class BlazorTelemetryClientTests
         Assert.True(options.CaptureNetworkAddresses);
         Assert.True(options.CaptureHttpHeaders);
         Assert.True(options.CaptureHttpBodySizes);
+        Assert.Contains("Microsoft.AspNetCore.Components", options.Sources);
+        Assert.Contains("Microsoft.AspNetCore.Components.Server.Circuits", options.Sources);
+        Assert.Contains("Microsoft.AspNetCore.Components", options.Meters);
+        Assert.Contains("Microsoft.AspNetCore.Components.Lifecycle", options.Meters);
+        Assert.Contains("Microsoft.AspNetCore.Components.Server.Circuits", options.Meters);
         Assert.Contains("Accept-Language", options.RequestHeaders);
         Assert.DoesNotContain("Authorization", options.RequestHeaders);
         Assert.DoesNotContain("Cookie", options.RequestHeaders);
