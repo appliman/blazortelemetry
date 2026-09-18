@@ -7,6 +7,7 @@ public interface ITelemetryRepository
     Task<TelemetryPage> Query(TelemetryQuery query, CancellationToken cancellationToken);
     Task<TelemetrySummary> GetSummary(DateTimeOffset fromUtc, CancellationToken cancellationToken);
     Task<DashboardBreakdown> GetDashboardBreakdown(DateTimeOffset fromUtc, string? serviceName, string? excludedRequestServiceName, CancellationToken cancellationToken);
+    Task<BlazorDashboardMetrics> GetBlazorDashboardMetrics(DateTimeOffset fromUtc, string? serviceName, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<string, long>> GetErrorCountsByService(DateTimeOffset fromUtc, string? serviceName, string? search, CancellationToken cancellationToken);
     Task<IReadOnlyList<MetricSeriesPoint>> GetMetricSeries(string name, string? serviceName, DateTimeOffset fromUtc, CancellationToken cancellationToken);
     Task<IReadOnlyList<AlertRule>> GetAlertRules(CancellationToken cancellationToken);

@@ -12,8 +12,17 @@ namespace BlazorTelemetry.Client;
 public sealed class BlazorTelemetryClientOptions
 {
     private readonly List<KeyValuePair<string, object>> _resourceAttributes = [];
-    private readonly List<string> _sources = [];
-    private readonly List<string> _meters = [];
+    private readonly List<string> _sources =
+    [
+        "Microsoft.AspNetCore.Components",
+        "Microsoft.AspNetCore.Components.Server.Circuits"
+    ];
+    private readonly List<string> _meters =
+    [
+        "Microsoft.AspNetCore.Components",
+        "Microsoft.AspNetCore.Components.Lifecycle",
+        "Microsoft.AspNetCore.Components.Server.Circuits"
+    ];
     private readonly List<string> _excludedPathPrefixes = ["/health", "/v1/logs", "/v1/traces", "/v1/metrics", "/opentelemetry.proto.collector."];
     private readonly List<string> _requestHeaders =
     [

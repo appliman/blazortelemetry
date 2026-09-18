@@ -14,13 +14,18 @@
     [Parameter, EditorRequired]
     public DashboardBreakdown Breakdown { get; set; } = DashboardBreakdown.Empty;
 
+    [Parameter, EditorRequired]
+    public BlazorDashboardMetrics BlazorMetrics { get; set; } = BlazorDashboardMetrics.Empty;
+
     private static readonly string[] HTTP_METHOD_ORDER = ["GET", "POST", "HEAD", "PATCH", "PUT", "DELETE", "OPTIONS"];
     private static readonly string[] ENTITY_FRAMEWORK_OPERATION_ORDER = ["read", "insert", "update", "delete"];
 
     private IReadOnlyList<TelemetryItem> TimedTraces => Traces.Where(item => item.DurationMs.HasValue).OrderBy(item => item.TimestampUtc).ToArray();
     private IReadOnlyList<ChartPoint> RequestDuration => TimedTraces.TakeLast(40).Select(item => new ChartPoint(item.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), item.DurationMs!.Value)).ToArray();
     private IReadOnlyList<ChartPoint> ErrorRate => BuildErrorRate();
-    private IReadOnlyList<ChartPoint> CurrentConnections => MetricSeries("connection", "active", "current");
+    private IReadOnlyList<ChartPoint> CurrentConnections => BlazorMetrics.ConnectedCircuitsSeries.Count > 0
+        ? BlazorMetrics.ConnectedCircuitsSeries.Select(point => new ChartPoint(point.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), point.Value)).ToArray()
+        : MetricSeries("connection", "active", "current");
     private IReadOnlyList<ChartPoint> CurrentRequests => MetricSeries("request", "active", "current");
     private IReadOnlyList<ChartPoint> CpuUsage => BuildCpuUsage();
     private IReadOnlyList<ChartPoint> MemoryUsage => BuildMemoryUsage();
@@ -50,6 +55,14 @@
         : ENTITY_FRAMEWORK_OPERATION_ORDER
             .Select(operation => new CountEntry(ToTitleCase(operation), Breakdown.EntityFrameworkOperations.GetValueOrDefault(operation)))
             .ToArray();
+    private bool HasBlazorData => BlazorMetrics.ActiveCircuitsSeries.Count > 0
+        || BlazorMetrics.ConnectedCircuitsSeries.Count > 0
+        || BlazorMetrics.Navigations > 0
+        || BlazorMetrics.TopRoutes.Count > 0
+        || BlazorMetrics.SlowestEventHandlers.Count > 0;
+    private long DisconnectedCircuits => Math.Max(0, BlazorMetrics.ActiveCircuits - BlazorMetrics.ConnectedCircuits);
+    private double NavigationsPerMinute => BlazorMetrics.Navigations / 60d;
+    private DualSeries CircuitSeries => BuildCircuitSeries();
     private double MaxEndpointCount => Math.Max(1, Endpoints.FirstOrDefault()?.Count ?? 1);
     private double MaxErrorEndpointCount => Math.Max(1, ErrorEndpoints.FirstOrDefault()?.Count ?? 1);
 
@@ -87,6 +100,33 @@
             var value = bucket.Length == 0 ? 0 : bucket.Count(item => item.StatusCode == 2) * 100d / bucket.Length;
             return new ChartPoint(start.ToLocalTime().ToString("HH:mm"), value);
         }).ToArray();
+    }
+
+    private DualSeries BuildCircuitSeries()
+    {
+        var timestamps = BlazorMetrics.ActiveCircuitsSeries.Select(point => point.TimestampUtc)
+            .Concat(BlazorMetrics.ConnectedCircuitsSeries.Select(point => point.TimestampUtc))
+            .Distinct()
+            .OrderBy(timestamp => timestamp)
+            .ToArray();
+        var active = BlazorMetrics.ActiveCircuitsSeries.ToDictionary(point => point.TimestampUtc, point => point.Value);
+        var connected = BlazorMetrics.ConnectedCircuitsSeries.ToDictionary(point => point.TimestampUtc, point => point.Value);
+        return new DualSeries(
+            timestamps.Select(timestamp => timestamp.ToLocalTime().ToString("HH:mm:ss")).ToArray(),
+            timestamps.Select(timestamp => active.GetValueOrDefault(timestamp)).ToArray(),
+            timestamps.Select(timestamp => connected.GetValueOrDefault(timestamp)).ToArray());
+    }
+
+    private static string FormatDuration(double? milliseconds)
+    {
+        if (!milliseconds.HasValue)
+        {
+            return "—";
+        }
+
+        return milliseconds.Value >= 1_000
+            ? $"{milliseconds.Value / 1_000:N2} s"
+            : $"{milliseconds.Value:N1} ms";
     }
 
     private IReadOnlyList<ChartPoint> BuildCpuUsage()
@@ -331,6 +371,87 @@
             </article>
         </div>
     </div>
+
+    <section class="bt-blazor-section" aria-labelledby="bt-blazor-heading">
+        <header class="bt-blazor-heading">
+            <div><h2 id="bt-blazor-heading">Blazor runtime</h2><p>Circuits, navigation, component lifecycle, and browser event handling · last hour</p></div>
+            <span class="@(HasBlazorData ? "available" : null)">@(HasBlazorData ? "Telemetry active" : "Waiting for Blazor metrics")</span>
+        </header>
+
+        @if (!HasBlazorData)
+        {
+            <div class="bt-blazor-empty"><strong>No Blazor runtime data</strong><span>The dashboard will populate after the application exports its component and circuit metrics.</span></div>
+        }
+        else
+        {
+            <div class="bt-blazor-kpis">
+                <article><span>Active circuits</span><strong>@BlazorMetrics.ActiveCircuits.ToString("N0")</strong><small>@DisconnectedCircuits.ToString("N0") temporarily disconnected</small></article>
+                <article><span>Connected circuits</span><strong>@BlazorMetrics.ConnectedCircuits.ToString("N0")</strong><small>live SignalR sessions</small></article>
+                <article><span>Navigations / min</span><strong>@NavigationsPerMinute.ToString("N1")</strong><small>@BlazorMetrics.Navigations.ToString("N0") over the last hour</small></article>
+                <article class="@(BlazorMetrics.Errors > 0 ? "has-error" : null)"><span>UI errors</span><strong>@BlazorMetrics.Errors.ToString("N0")</strong><small>navigation, lifecycle, and events</small></article>
+            </div>
+
+            <div class="bt-blazor-insights">
+                <article class="bt-monitor-card bt-blazor-circuits">
+                    <header><h2>Circuit availability</h2><span>active / connected</span></header>
+                    @if (CircuitSeries.Labels.Count == 0)
+                    {
+                        <div class="bt-no-data compact">No circuit series</div>
+                    }
+                    else
+                    {
+                        <TelemetryChart Labels="CircuitSeries.Labels" Values="CircuitSeries.Primary" SecondaryValues="CircuitSeries.Secondary" SeriesLabel="Active" SecondarySeriesLabel="Connected" Color="#78a9ff" SecondaryColor="#76e4b8" Height="220" AriaLabel="Active and connected Blazor circuits" />
+                    }
+                </article>
+                <article class="bt-monitor-card bt-blazor-performance">
+                    <header><h2>Interaction performance</h2><span>p95 duration</span></header>
+                    <dl>
+                        <div><dt>Browser event handling</dt><dd>@FormatDuration(BlazorMetrics.EventHandlerP95Ms)</dd></div>
+                        <div><dt>Component parameter updates</dt><dd>@FormatDuration(BlazorMetrics.ComponentUpdateP95Ms)</dd></div>
+                        <div><dt>Render batches</dt><dd>@FormatDuration(BlazorMetrics.RenderDiffP95Ms)</dd></div>
+                        <div><dt>Completed circuit lifetime</dt><dd>@FormatDuration(BlazorMetrics.CircuitDurationP95Ms)</dd></div>
+                    </dl>
+                </article>
+            </div>
+
+            <div class="bt-blazor-rankings">
+                <article class="bt-monitor-card">
+                    <header><h2>Most visited Blazor routes</h2><span>@BlazorMetrics.TopRoutes.Count routes</span></header>
+                    @if (BlazorMetrics.TopRoutes.Count == 0)
+                    {
+                        <div class="bt-no-data table-empty">No navigation data</div>
+                    }
+                    else
+                    {
+                        <div class="bt-blazor-table routes" role="table" aria-label="Most visited Blazor routes">
+                            <div class="heading" role="row"><span>Route</span><span>Component</span><span>Visits</span><span>Errors</span></div>
+                            @foreach (var route in BlazorMetrics.TopRoutes)
+                            {
+                                <div class="row" role="row"><code title="@route.Route">@route.Route</code><span title="@route.Component">@route.Component</span><strong>@route.Navigations.ToString("N0")</strong><strong class="@(route.Errors > 0 ? "danger" : null)">@route.Errors.ToString("N0")</strong></div>
+                            }
+                        </div>
+                    }
+                </article>
+                <article class="bt-monitor-card">
+                    <header><h2>Slowest event handlers</h2><span>ranked by p95</span></header>
+                    @if (BlazorMetrics.SlowestEventHandlers.Count == 0)
+                    {
+                        <div class="bt-no-data table-empty">No browser event data</div>
+                    }
+                    else
+                    {
+                        <div class="bt-blazor-table handlers" role="table" aria-label="Slowest Blazor event handlers">
+                            <div class="heading" role="row"><span>Handler</span><span>Event</span><span>p95</span><span>Calls</span></div>
+                            @foreach (var handler in BlazorMetrics.SlowestEventHandlers)
+                            {
+                                <div class="row" role="row"><span title="@handler.Component.@handler.Method"><strong>@handler.Method</strong><small>@handler.Component</small></span><code>@handler.EventName</code><strong>@FormatDuration(handler.P95DurationMs)</strong><strong class="@(handler.Errors > 0 ? "danger" : null)">@handler.Invocations.ToString("N0")</strong></div>
+                            }
+                        </div>
+                    }
+                </article>
+            </div>
+        }
+    </section>
 
     <div class="bt-dashboard-distributions">
         <article class="bt-monitor-card bt-distribution-card">

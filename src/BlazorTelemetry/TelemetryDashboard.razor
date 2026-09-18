@@ -43,6 +43,7 @@
     private IReadOnlyList<TelemetryItem> _dashboardLogs = [];
     private IReadOnlyList<TelemetryItem> _dashboardMetrics = [];
     private DashboardBreakdown _dashboardBreakdown = DashboardBreakdown.Empty;
+    private BlazorDashboardMetrics _blazorDashboard = BlazorDashboardMetrics.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -118,12 +119,14 @@
                 var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
                 var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
                 var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _service, null, _lifetime.Token);
-                await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask);
+                var blazorDashboardTask = Repository.GetBlazorDashboardMetrics(fromUtc, _service, _lifetime.Token);
+                await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask, blazorDashboardTask);
                 _dashboards = await dashboardsTask;
                 _dashboardTraces = (await tracesTask).Items;
                 _dashboardLogs = (await logsTask).Items;
                 _dashboardMetrics = (await metricsTask).Items;
                 _dashboardBreakdown = await breakdownTask;
+                _blazorDashboard = await blazorDashboardTask;
             }
         }
         catch (Exception exception)
@@ -718,7 +721,7 @@
         }
         else if (_activeView == "dashboards")
         {
-            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" />
+            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" />
             <div class="bt-saved-dashboard-heading"><div><h2>Shared dashboards</h2><p>Additional views saved by the team</p></div><AuthorizeView Policy="@Options.AdministratorPolicy" Context="authorizationContext"><button class="bt-primary" @onclick="CreateDashboard">New dashboard</button></AuthorizeView></div>
             <div class="bt-dashboard-grid bt-saved-dashboard-grid">
                 @foreach (var dashboard in _dashboards)
