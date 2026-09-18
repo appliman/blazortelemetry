@@ -1,0 +1,71 @@
+name: Publish BlazorTelemetry client packages to NuGet.org
+
+on:
+  push:
+    branches:
+      - prod
+    paths:
+      - .github/workflows/publish-nuget.yml
+      - README.md
+      - src/BlazorTelemetryClient/**
+      - src/BlazorTelemetryClient.ChannelMediator/**
+  workflow_dispatch:
+
+concurrency:
+  group: publish-blazortelemetry-client-packages-nuget
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  CLIENT_PACKAGE_PROJECT: src/BlazorTelemetryClient/BlazorTelemetryClient.csproj
+  CHANNEL_MEDIATOR_PACKAGE_PROJECT: src/BlazorTelemetryClient.ChannelMediator/BlazorTelemetryClient.ChannelMediator.csproj
+  PACKAGE_OUTPUT: artifacts/packages
+
+jobs:
+  publish:
+    name: Build, pack, and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }}
+
+      - name: Build
+        run: dotnet build ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }} --configuration Release --no-restore
+
+      - name: Pack BlazorTelemetryClient
+        run: dotnet pack ${{ env.CLIENT_PACKAGE_PROJECT }} --configuration Release --no-build --output ${{ env.PACKAGE_OUTPUT }}
+
+      - name: Pack BlazorTelemetryClient.ChannelMediator
+        run: dotnet pack ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }} --configuration Release --no-build --output ${{ env.PACKAGE_OUTPUT }}
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlazorTelemetry-client-packages-nuget
+          path: |
+            ${{ env.PACKAGE_OUTPUT }}/*.nupkg
+            ${{ env.PACKAGE_OUTPUT }}/*.snupkg
+          retention-days: 14
+
+      - name: Publish package to NuGet.org
+        run: dotnet nuget push "${{ env.PACKAGE_OUTPUT }}/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+      - name: Publish symbols to NuGet.org
+        run: dotnet nuget push "${{ env.PACKAGE_OUTPUT }}/*.snupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

@@ -19,7 +19,8 @@ public sealed class RequestTelemetryMiddleware(RequestDelegate next, ILogger<Req
             return;
         }
 
-        var _requestId = Guid.NewGuid().ToString("N");
+        var _activity = Activity.Current;
+        var _requestId = _activity?.TraceId.ToHexString() ?? Guid.NewGuid().ToString("N");
         var _started = Stopwatch.GetTimestamp();
         var _item = new TelemetryItem
         {
@@ -30,6 +31,7 @@ public sealed class RequestTelemetryMiddleware(RequestDelegate next, ILogger<Req
             Name = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{_path}",
             Body = context.Request.Method,
             TraceId = _requestId,
+            SpanId = _activity?.SpanId.ToHexString(),
             AttributesJson = JsonSerializer.Serialize(new Dictionary<string, string?>
             {
                 ["client.address"] = context.Connection.RemoteIpAddress?.ToString(),

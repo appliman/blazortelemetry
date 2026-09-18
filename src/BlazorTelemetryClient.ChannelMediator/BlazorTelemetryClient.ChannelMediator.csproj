@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.0.1.0</Version>
+    <AssemblyName>BlazorTelemetryClient.ChannelMediator</AssemblyName>
+    <RootNamespace>BlazorTelemetry.Client.ChannelMediator</RootNamespace>
+
+    <PackageId>BlazorTelemetryClient.ChannelMediator</PackageId>
+    <Title>BlazorTelemetryClient.ChannelMediator</Title>
+    <Authors>Appliman</Authors>
+    <Company>Appliman</Company>
+    <Description>ChannelMediator tracing and metrics integration for BlazorTelemetryClient, including handler duration, request counts, failures, and active request measurements.</Description>
+    <Copyright>© $([System.DateTime]::Now.Year) Appliman</Copyright>
+    <PackageTags>blazor;aspnetcore;opentelemetry;observability;telemetry;channelmediator;mediator;cqrs;traces;metrics</PackageTags>
+    <PackageProjectUrl>https://github.com/appliman/blazortelemetry</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/appliman/blazortelemetry.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReleaseNotes>https://github.com/appliman/blazortelemetry/releases</PackageReleaseNotes>
+
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ChannelMediator" Version="[1.1.18]" />
+    <ProjectReference Include="..\BlazorTelemetryClient\BlazorTelemetryClient.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

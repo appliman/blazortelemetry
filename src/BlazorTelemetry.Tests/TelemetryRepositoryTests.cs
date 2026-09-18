@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics;
 
 namespace BlazorTelemetry.Tests;
 
@@ -51,6 +52,23 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
         Assert.True(_item.DurationMs >= 0);
         Assert.Contains("127.0.0.1", _item.AttributesJson);
         Assert.Contains("Request test agent", _item.AttributesJson);
+    }
+
+    [Fact]
+    public async Task RequestCollectionUsesTheCurrentActivityForTraceCorrelation()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        _context.Request.Path = "/orders/42";
+        using var _activity = new Activity("request").SetIdFormat(ActivityIdFormat.W3C).Start();
+        var _middleware = new RequestTelemetryMiddleware(_ => Task.CompletedTask, NullLogger<RequestTelemetryMiddleware>.Instance);
+
+        await _middleware.InvokeAsync(_context, _repository,
+            new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { ApplicationName = "test" });
+
+        var _item = Assert.Single((await _repository.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
+        Assert.Equal(_activity.TraceId.ToHexString(), _item.TraceId);
+        Assert.Equal(_activity.SpanId.ToHexString(), _item.SpanId);
     }
 
     [Fact]
@@ -181,6 +199,35 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
 
         Assert.Equal(2, counts["api"]);
         Assert.Equal(1, counts["worker"]);
+    }
+
+    [Fact]
+    public async Task DashboardBreakdownAggregatesRequestsAndLatestEntityFrameworkCountersBeforePagination()
+    {
+        var repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var now = DateTimeOffset.UtcNow;
+        await repository.Store([
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = now.AddSeconds(-30), ObservedUtc = now, ServiceName = "api", Name = "/products", Body = "GET", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = now.AddSeconds(-20), ObservedUtc = now, ServiceName = "api", Name = "/products", Body = "POST", StatusCode = 201 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = now.AddSeconds(-10), ObservedUtc = now, ServiceName = "BlazorTelemetry.Host", Name = "/telemetry", Body = "GET", StatusCode = 404 },
+            new TelemetryItem { Kind = TelemetryKind.Metric, TimestampUtc = now.AddSeconds(-30), ObservedUtc = now, ServiceName = "api", Name = "blazortelemetry.entity_framework.commands", NumericValue = 4, ResourceAttributesJson = "{\"service.instance.id\":\"api-1\"}", AttributesJson = "{\"db.operation.type\":\"read\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Metric, TimestampUtc = now.AddSeconds(-10), ObservedUtc = now, ServiceName = "api", Name = "blazortelemetry.entity_framework.commands", NumericValue = 7, ResourceAttributesJson = "{\"service.instance.id\":\"api-1\"}", AttributesJson = "{\"db.operation.type\":\"read\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Metric, TimestampUtc = now.AddSeconds(-10), ObservedUtc = now, ServiceName = "api", Name = "blazortelemetry.entity_framework.commands", NumericValue = 2, ResourceAttributesJson = "{\"service.instance.id\":\"api-1\"}", AttributesJson = "{\"db.operation.type\":\"insert\"}" }
+        ], CancellationToken.None);
+
+        var breakdown = await repository.GetDashboardBreakdown(
+            now.AddMinutes(-1),
+            null,
+            "BlazorTelemetry.Host",
+            CancellationToken.None);
+
+        Assert.Equal(1, breakdown.HttpMethods["GET"]);
+        Assert.Equal(1, breakdown.HttpMethods["POST"]);
+        Assert.Equal(1, breakdown.HttpStatuses[200]);
+        Assert.Equal(1, breakdown.HttpStatuses[201]);
+        Assert.DoesNotContain(404, breakdown.HttpStatuses.Keys);
+        Assert.Equal(7, breakdown.EntityFrameworkOperations["read"]);
+        Assert.Equal(2, breakdown.EntityFrameworkOperations["insert"]);
     }
 
     [Fact]

@@ -400,9 +400,11 @@ td small { display: block; color: var(--muted); }
     .bt-drawer-close { width: 46px; height: 46px; }
 }
 
-.bt-requests-table { min-width: 1200px; }
+.bt-requests-table { min-width: 1120px; }
 .bt-requests-table .bt-request-route { min-width: 240px; max-width: 400px; white-space: normal; overflow-wrap: anywhere; }
 .bt-requests-table .bt-request-context { min-width: 180px; max-width: 320px; white-space: normal; overflow-wrap: anywhere; }
+.bt-requests-table .bt-request-trace { min-width: 110px; }
+.bt-request-trace .bt-link { font-family: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

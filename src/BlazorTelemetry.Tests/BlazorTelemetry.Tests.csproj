@@ -20,6 +20,8 @@
     <ProjectReference Include="..\BlazorTelemetry.Core\BlazorTelemetry.Core.csproj" />
     <ProjectReference Include="..\BlazorTelemetry.Sqlite\BlazorTelemetry.Sqlite.csproj" />
     <ProjectReference Include="..\BlazorTelemetry.AspNetCore\BlazorTelemetry.AspNetCore.csproj" />
+    <ProjectReference Include="..\BlazorTelemetryClient\BlazorTelemetryClient.csproj" />
+    <ProjectReference Include="..\BlazorTelemetryClient.ChannelMediator\BlazorTelemetryClient.ChannelMediator.csproj" />
   </ItemGroup>
 
   <ItemGroup>

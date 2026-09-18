@@ -14,7 +14,7 @@ Collect, correlate, and explore your OpenTelemetry **logs**, **traces**, and **m
 
 </div>
 
-![BlazorTelemetry operational dashboard](docs/images/dashboard.png)
+![BlazorTelemetry operational dashboard](https://raw.githubusercontent.com/appliman/blazortelemetry/main/docs/images/dashboard.png)
 
 ## Why BlazorTelemetry ?
 
@@ -31,15 +31,15 @@ BlazorTelemetry is designed for small .NET teams that need to understand their a
 
 ## Product tour
 
-Move from the service overview to operational dashboards, structured logs, distributed traces, and metrics without leaving the application.
+Move from the service overview to operational dashboards, structured logs, distributed traces, and metrics without leaving the application. The dashboard highlights HTTP methods, response status codes, and Entity Framework read/write operations at a glance.
 
-![BlazorTelemetry product tour showing overview, dashboards, logs, traces, and metrics](docs/images/product-tour.gif)
+![BlazorTelemetry product tour showing overview, dashboards, logs, traces, and metrics](https://raw.githubusercontent.com/appliman/blazortelemetry/main/docs/images/product-tour.gif)
 
 ### Investigate without switching tools
 
 The detail drawer exposes the OTLP level, service, environment, timestamps, attributes, and correlation identifiers. Selecting the `TraceId` opens the related trace directly.
 
-![Structured log detail and correlation context](docs/images/log-details.png)
+![Structured log detail and correlation context](https://raw.githubusercontent.com/appliman/blazortelemetry/main/docs/images/log-details.png)
 
 ### Responsive by design
 
@@ -51,8 +51,8 @@ The overview and operational dashboards remain usable on mobile, with compact na
     <td width="50%" align="center"><strong>Operational dashboard</strong></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/mobile-overview.png" alt="BlazorTelemetry mobile overview" width="390"></td>
-    <td align="center"><img src="docs/images/mobile-dashboard.png" alt="BlazorTelemetry mobile dashboard" width="390"></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/appliman/blazortelemetry/main/docs/images/mobile-overview.png" alt="BlazorTelemetry mobile overview" width="390"></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/appliman/blazortelemetry/main/docs/images/mobile-dashboard.png" alt="BlazorTelemetry mobile dashboard" width="390"></td>
   </tr>
 </table>
 
@@ -63,7 +63,7 @@ The overview and operational dashboards remain usable on mobile, with compact na
 | Collection | OTLP HTTP/protobuf on `/v1/logs`, `/v1/traces`, and `/v1/metrics` |
 | Exploration | Global search, service filters, time windows, and live refresh |
 | Correlation | Navigation across logs, traces, and spans using `TraceId` and `SpanId` |
-| Dashboards | Request duration, error rate, activity, protocols, and endpoint insights |
+| Dashboards | Request duration, error rate, HTTP method and status-code distributions, Entity Framework operations, activity, protocols, and endpoint insights |
 | Alerts | Alert rules, persistent incidents, and state tracking |
 | Notifications | Webhook, SMTP, and [ntfy](https://ntfy.sh/) |
 | Security | Optional ingestion keys and passwordless TOTP authentication |
@@ -110,9 +110,15 @@ Open [http://localhost:8080/login/qr-code](http://localhost:8080/login/qr-code),
 
 The telemetry database and ASP.NET Core Data Protection keys are persisted in the `blazor-telemetry-dev-data` Docker volume. No password or local user database is used.
 
-## Connect a .NET application
+## Instrument a Blazor or ASP.NET Core application
 
-Configure your OpenTelemetry exporter to use OTLP gRPC, which is enabled by default on port `4317`:
+Install the preconfigured client from NuGet.org:
+
+```bash
+dotnet add package BlazorTelemetryClient
+```
+
+Configure the service name and the BlazorTelemetry OTLP endpoint. gRPC is used by default on port `4317`:
 
 ```dotenv
 OTEL_SERVICE_NAME=my-service
@@ -120,34 +126,60 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 ```
 
-Example ASP.NET Core configuration:
+Register the client once in `Program.cs`:
 
 ```csharp
-using OpenTelemetry.Logs;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
+using BlazorTelemetry.Client;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(resource => resource.AddService("my-service"))
-    .WithTracing(tracing => tracing
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddOtlpExporter())
-    .WithMetrics(metrics => metrics
-        .AddRuntimeInstrumentation()
-        .AddAspNetCoreInstrumentation()
-        .AddOtlpExporter());
+builder.Services.AddBlazorTelemetry();
+```
 
-builder.Logging.AddOpenTelemetry(logging =>
+This single registration enables structured logs, ASP.NET Core request traces and metrics, `HttpClient` telemetry, runtime metrics, client and network address enrichment, HTTP headers and body sizes, and Entity Framework traces and operation metrics. Database statements remain disabled by default to avoid exporting sensitive query values.
+
+All standard `OTEL_*` environment variables remain supported. Options can also be overridden or extended in code:
+
+```csharp
+using BlazorTelemetry.Client;
+using OpenTelemetry.Exporter;
+
+builder.Services.AddBlazorTelemetry(options =>
 {
-    logging.IncludeFormattedMessage = true;
-    logging.IncludeScopes = true;
-    logging.AddOtlpExporter();
+    options.ServiceName = "my-service";
+    options.ServiceVersion = "1.0.0";
+    options.DeploymentEnvironment = builder.Environment.EnvironmentName;
+    options.Endpoint = new Uri("https://telemetry.example.com");
+    options.Protocol = OtlpExportProtocol.HttpProtobuf;
+
+    options.AddSource("MyCompany.MyApplication");
+    options.AddMeter("MyCompany.MyApplication");
+    options.AddResourceAttribute("service.namespace", "commerce");
 });
 ```
+
+The Entity Framework metrics classify completed commands as `read`, `insert`, `update`, `delete`, or `other`, with command counts, failures, active commands, and execution duration.
+
+### ChannelMediator instrumentation
+
+Install the optional ChannelMediator integration:
+
+```bash
+dotnet add package BlazorTelemetryClient.ChannelMediator
+```
+
+Use its combined registration instead of `AddBlazorTelemetry()`:
+
+```csharp
+using BlazorTelemetry.Client.ChannelMediator;
+
+builder.Services.AddBlazorTelemetryChannelMediator(options =>
+{
+    options.ServiceName = "my-service";
+});
+```
+
+The integration registers a ChannelMediator pipeline behavior and automatically configures the required OpenTelemetry source and meter. Each handler produces a correlated internal span together with request, failure, active-request, and duration metrics. Request and response type names are attached to the telemetry for filtering.
 
 OTLP HTTP/protobuf remains available on the web endpoint through `/v1/logs`, `/v1/traces`, and `/v1/metrics`.
 
