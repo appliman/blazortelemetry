@@ -14,6 +14,7 @@
     private string _search = string.Empty;
     private string? _service;
     private string _logLevel = string.Empty;
+    private string _requestStatus = string.Empty;
     private bool _paused;
     private bool _loading = true;
     private string? _error;
@@ -88,6 +89,9 @@
                 var (minimumSeverityNumber, maximumSeverityNumber) = _activeView == "logs"
                     ? LogSeverityRange(_logLevel)
                     : (null, null);
+                var (minimumStatusCode, maximumStatusCode, hasStatusCode) = _activeView == "requests"
+                    ? RequestStatusRange(_requestStatus)
+                    : (null, null, null);
                 _page = await Repository.Query(new TelemetryQuery(
                     kind,
                     _service,
@@ -97,7 +101,10 @@
                     Take: 200,
                     MinimumSeverityNumber: minimumSeverityNumber,
                     MaximumSeverityNumber: maximumSeverityNumber,
-                    ExcludedServiceName: _activeView == "requests" ? HostEnvironment.ApplicationName : null), _lifetime.Token);
+                    ExcludedServiceName: _activeView == "requests" ? HostEnvironment.ApplicationName : null,
+                    MinimumStatusCode: minimumStatusCode,
+                    MaximumStatusCode: maximumStatusCode,
+                    HasStatusCode: hasStatusCode), _lifetime.Token);
                 if (_activeView == "metrics")
                 {
                     _selectedMetric ??= _page.Items.FirstOrDefault()?.Name;
@@ -421,6 +428,16 @@
         "critical" => (21, 24),
         _ => (null, null)
     };
+    private static (int? Minimum, int? Maximum, bool? HasStatusCode) RequestStatusRange(string status) => status switch
+    {
+        "in-progress" => (null, null, false),
+        "1xx" => (100, 199, true),
+        "2xx" => (200, 299, true),
+        "3xx" => (300, 399, true),
+        "4xx" => (400, 499, true),
+        "5xx" => (500, 599, true),
+        _ => (null, null, null)
+    };
     private string ViewTitle() => _activeView switch { "requests" => "Requests", "summary" => "Overview", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboards", "alerts" => "Alert center", _ => "Administration" };
     private string ViewSubtitle() => _activeView switch { "requests" => "Live HTTP requests and recent route activity · last hour", "summary" => "An immediate view of your applications' health", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
 
@@ -522,6 +539,21 @@
                             <option value="warning">Warning</option>
                             <option value="error">Error</option>
                             <option value="critical">Critical</option>
+                        </select>
+                    </label>
+                }
+                else if (_activeView == "requests")
+                {
+                    <label class="bt-level-filter">
+                        <span>Status</span>
+                        <select @bind="_requestStatus" @bind:after="Refresh" aria-label="Filter requests by status">
+                            <option value="">All statuses</option>
+                            <option value="in-progress">In progress</option>
+                            <option value="1xx">1xx · Informational</option>
+                            <option value="2xx">2xx · Successful</option>
+                            <option value="3xx">3xx · Redirection</option>
+                            <option value="4xx">4xx · Client error</option>
+                            <option value="5xx">5xx · Server error</option>
                         </select>
                     </label>
                 }

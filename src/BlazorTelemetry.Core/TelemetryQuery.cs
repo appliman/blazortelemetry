@@ -11,4 +11,7 @@ public sealed record TelemetryQuery(
     int Take = 100,
     int? MinimumSeverityNumber = null,
     int? MaximumSeverityNumber = null,
-    string? ExcludedServiceName = null);
+    string? ExcludedServiceName = null,
+    int? MinimumStatusCode = null,
+    int? MaximumStatusCode = null,
+    bool? HasStatusCode = null);

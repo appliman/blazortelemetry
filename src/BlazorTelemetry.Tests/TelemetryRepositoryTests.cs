@@ -183,6 +183,38 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task QueryFiltersRequestsByHttpStatusBeforePagination()
+    {
+        var repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var timestamp = DateTimeOffset.UtcNow;
+        await repository.Store([
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp, ObservedUtc = timestamp, ServiceName = "api", Name = "pending" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(1), ObservedUtc = timestamp, ServiceName = "api", Name = "switching", StatusCode = 101 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(2), ObservedUtc = timestamp, ServiceName = "api", Name = "ok", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(3), ObservedUtc = timestamp, ServiceName = "api", Name = "not-found", StatusCode = 404 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(4), ObservedUtc = timestamp, ServiceName = "api", Name = "error", StatusCode = 500 }
+        ], CancellationToken.None);
+
+        var successfulPage = await repository.Query(new TelemetryQuery(
+            TelemetryKind.Request,
+            Take: 1,
+            MinimumStatusCode: 200,
+            MaximumStatusCode: 299,
+            HasStatusCode: true), CancellationToken.None);
+        var inProgressPage = await repository.Query(new TelemetryQuery(
+            TelemetryKind.Request,
+            Take: 1,
+            HasStatusCode: false), CancellationToken.None);
+
+        Assert.Equal("ok", Assert.Single(successfulPage.Items).Name);
+        Assert.Equal(1, successfulPage.Total);
+        Assert.False(successfulPage.IsTruncated);
+        Assert.Equal("pending", Assert.Single(inProgressPage.Items).Name);
+        Assert.Equal(1, inProgressPage.Total);
+        Assert.False(inProgressPage.IsTruncated);
+    }
+
+    [Fact]
     public async Task GetErrorCountsByServiceCountsEachApplicationWithinTheWindow()
     {
         var repository = new TelemetryRepository(new TestDbContextFactory(_options));

@@ -153,6 +153,24 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             source = source.Where(item => item.SeverityNumber <= maximumSeverityNumber);
         }
 
+        if (query.MinimumStatusCode.HasValue)
+        {
+            var minimumStatusCode = query.MinimumStatusCode.Value;
+            source = source.Where(item => item.StatusCode >= minimumStatusCode);
+        }
+
+        if (query.MaximumStatusCode.HasValue)
+        {
+            var maximumStatusCode = query.MaximumStatusCode.Value;
+            source = source.Where(item => item.StatusCode <= maximumStatusCode);
+        }
+
+        if (query.HasStatusCode.HasValue)
+        {
+            var hasStatusCode = query.HasStatusCode.Value;
+            source = source.Where(item => item.StatusCode.HasValue == hasStatusCode);
+        }
+
         if (query.FromUtc.HasValue)
         {
             var fromUtc = query.FromUtc.Value;
