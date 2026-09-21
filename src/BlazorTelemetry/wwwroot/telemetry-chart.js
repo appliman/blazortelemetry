@@ -18,12 +18,15 @@ export async function render(elementId, labels, values, secondaryValues, seriesL
     await ensureEcharts();
     const element = document.getElementById(elementId);
     if (!element) return;
-    let chart = instances.get(elementId);
-    if (!chart) {
-        chart = window.echarts.init(element, null, { renderer: 'canvas' });
-        instances.set(elementId, chart);
-        new ResizeObserver(() => chart.resize()).observe(element);
+    let instance = instances.get(elementId);
+    if (!instance) {
+        const chart = window.echarts.init(element, null, { renderer: 'canvas' });
+        const observer = new ResizeObserver(() => chart.resize());
+        observer.observe(element);
+        instance = { chart, observer };
+        instances.set(elementId, instance);
     }
+    const chart = instance.chart;
     const hasSecondarySeries = secondaryValues.length > 0;
     const isBarChart = chartType === 'bar';
     const series = [{
@@ -61,8 +64,11 @@ export async function render(elementId, labels, values, secondaryValues, seriesL
 }
 
 export function dispose(elementId) {
-    const chart = instances.get(elementId);
-    if (chart) chart.dispose();
+    const instance = instances.get(elementId);
+    if (instance) {
+        instance.observer.disconnect();
+        instance.chart.dispose();
+    }
     instances.delete(elementId);
 }
 

@@ -10,6 +10,8 @@
 
     private static readonly string? _assemblyVersion = typeof(TelemetryDashboard).Assembly.GetName().Version?.ToString(4);
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private Task? _refreshLoopTask;
     private string _activeView = "dashboards";
     private string _search = string.Empty;
     private string? _service;
@@ -49,12 +51,12 @@
     protected override async Task OnInitializedAsync()
     {
         await Refresh();
-        _ = RefreshLoop(_lifetime.Token);
+        _refreshLoopTask = RefreshLoop(_lifetime.Token);
     }
 
     private async Task RefreshLoop(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Options.DashboardRefreshIntervalSeconds));
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
@@ -72,6 +74,7 @@
 
     private async Task Refresh()
     {
+        await _refreshLock.WaitAsync(_lifetime.Token);
         try
         {
             _error = null;
@@ -122,9 +125,9 @@
             else if (_activeView == "dashboards")
             {
                 var dashboardsTask = Repository.GetDashboards(_lifetime.Token);
-                var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
-                var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
-                var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _service, FromUtc: fromUtc, Take: 500), _lifetime.Token);
+                var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _service, FromUtc: fromUtc, Take: 200), _lifetime.Token);
+                var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _service, FromUtc: fromUtc, Take: 200), _lifetime.Token);
+                var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _service, FromUtc: fromUtc, Take: 200), _lifetime.Token);
                 var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _service, null, _lifetime.Token);
                 var blazorDashboardTask = Repository.GetBlazorDashboardMetrics(fromUtc, _service, _lifetime.Token);
                 await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask, blazorDashboardTask);
@@ -143,7 +146,11 @@
         finally
         {
             _loading = false;
-            StateHasChanged();
+            _refreshLock.Release();
+            if (!_lifetime.IsCancellationRequested)
+            {
+                StateHasChanged();
+            }
         }
     }
 
@@ -155,7 +162,33 @@
         _selectedSpan = null;
         _collapsedSpans.Clear();
         _expandedTraces.Clear();
+        ReleaseInactiveViewData(view);
         await Refresh();
+    }
+
+    private void ReleaseInactiveViewData(string view)
+    {
+        if (view != "dashboards")
+        {
+            _dashboardTraces = [];
+            _dashboardLogs = [];
+            _dashboardMetrics = [];
+            _dashboardBreakdown = DashboardBreakdown.Empty;
+            _blazorDashboard = BlazorDashboardMetrics.Empty;
+            _dashboards = [];
+        }
+
+        if (view is not ("logs" or "traces" or "metrics" or "requests"))
+        {
+            _page = new TelemetryPage([], 0, false);
+            _series = [];
+        }
+
+        if (view != "alerts")
+        {
+            _rules = [];
+            _incidents = [];
+        }
     }
 
     private void OpenLog(TelemetryItem item)
@@ -475,11 +508,30 @@
     public async ValueTask DisposeAsync()
     {
         _lifetime.Cancel();
-        _lifetime.Dispose();
+        if (_refreshLoopTask is not null)
+        {
+            try
+            {
+                await _refreshLoopTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
         if (_dashboardModule is not null)
         {
-            await _dashboardModule.DisposeAsync();
+            try
+            {
+                await _dashboardModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
         }
+
+        _refreshLock.Dispose();
+        _lifetime.Dispose();
     }
 }
 

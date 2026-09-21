@@ -13,7 +13,7 @@ internal sealed class TelemetryIngestionQueue
         _counters = counters;
         _channel = Channel.CreateBounded<IngestionBatch>(new BoundedChannelOptions(options.QueueCapacity)
         {
-            FullMode = BoundedChannelFullMode.DropWrite,
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false
         });
