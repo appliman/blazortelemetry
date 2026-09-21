@@ -4,7 +4,9 @@ using System.Text.Json;
 
 namespace BlazorTelemetry.Sqlite;
 
-public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> contextFactory) : ITelemetryRepository
+public sealed class TelemetryRepository(
+    IDbContextFactory<TelemetryDbContext> contextFactory,
+    BlazorTelemetryOptions? options = null) : ITelemetryRepository
 {
     private static readonly string[] BLAZOR_METRIC_NAMES =
     [
@@ -153,6 +155,24 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             source = source.Where(item => item.SeverityNumber <= maximumSeverityNumber);
         }
 
+        if (query.MinimumStatusCode.HasValue)
+        {
+            var minimumStatusCode = query.MinimumStatusCode.Value;
+            source = source.Where(item => item.StatusCode >= minimumStatusCode);
+        }
+
+        if (query.MaximumStatusCode.HasValue)
+        {
+            var maximumStatusCode = query.MaximumStatusCode.Value;
+            source = source.Where(item => item.StatusCode <= maximumStatusCode);
+        }
+
+        if (query.HasStatusCode.HasValue)
+        {
+            var hasStatusCode = query.HasStatusCode.Value;
+            source = source.Where(item => item.StatusCode.HasValue == hasStatusCode);
+        }
+
         if (query.FromUtc.HasValue)
         {
             var fromUtc = query.FromUtc.Value;
@@ -238,14 +258,15 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             .Select(group => new { Status = group.Key, Count = group.LongCount() })
             .ToListAsync(cancellationToken);
         var metricRows = await entityFrameworkMetrics
-            .Select(item => new
-            {
-                item.ServiceName,
-                item.ResourceAttributesJson,
-                item.AttributesJson,
-                item.TimestampUtc,
-                Value = item.NumericValue!.Value
-            })
+            .GroupBy(item => new { item.ServiceName, item.ResourceAttributesJson, item.AttributesJson })
+            .Select(group => group
+                .OrderByDescending(item => item.TimestampUtc)
+                .Select(item => new
+                {
+                    item.AttributesJson,
+                    Value = item.NumericValue!.Value
+                })
+                .First())
             .ToListAsync(cancellationToken);
 
         var methods = methodRows
@@ -253,8 +274,6 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             .ToDictionary(group => group.Key, group => group.Sum(item => item.Count), StringComparer.OrdinalIgnoreCase);
         var statuses = statusRows.ToDictionary(item => item.Status, item => item.Count);
         var operations = metricRows
-            .GroupBy(item => new { item.ServiceName, item.ResourceAttributesJson, item.AttributesJson })
-            .Select(group => group.MaxBy(item => item.TimestampUtc)!)
             .Select(item => new { Operation = ReadMetricAttribute(item.AttributesJson, "db.operation.type"), item.Value })
             .Where(item => item.Operation is not null)
             .GroupBy(item => item.Operation!, StringComparer.OrdinalIgnoreCase)
@@ -282,9 +301,24 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             source = source.Where(item => item.ServiceName == serviceName);
         }
 
+        var maximumRows = Math.Max(1, options?.MaximumDashboardMetricRows ?? 5_000);
         var metrics = await source
-            .OrderBy(item => item.TimestampUtc)
+            .OrderByDescending(item => item.TimestampUtc)
+            .Take(maximumRows)
+            .Select(item => new TelemetryItem
+            {
+                TimestampUtc = item.TimestampUtc,
+                ServiceName = item.ServiceName,
+                Name = item.Name,
+                Unit = item.Unit,
+                MetricType = item.MetricType,
+                NumericValue = item.NumericValue,
+                ResourceAttributesJson = item.ResourceAttributesJson,
+                AttributesJson = item.AttributesJson,
+                DetailsJson = item.DetailsJson
+            })
             .ToListAsync(cancellationToken);
+        metrics.Reverse();
         if (metrics.Count == 0)
         {
             return BlazorDashboardMetrics.Empty;
@@ -467,7 +501,7 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
 
         var connection = context.Database.GetDbConnection();
         await connection.OpenAsync(cancellationToken);
-        while (await GetLogicalTelemetryBytes(connection, cancellationToken) > maximumBytes)
+        while (await GetUsedDatabaseBytes(connection, cancellationToken) > maximumBytes)
         {
             var removed = await context.Database.ExecuteSqlRawAsync(
                 "DELETE FROM TelemetryItems WHERE Id IN (SELECT Id FROM TelemetryItems ORDER BY TimestampUtc LIMIT 10000)",
@@ -480,10 +514,7 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
             purged += removed;
         }
 
-        if (purged > 0)
-        {
-            await context.Database.ExecuteSqlRawAsync("PRAGMA wal_checkpoint(PASSIVE);", cancellationToken);
-        }
+        await context.Database.ExecuteSqlRawAsync("PRAGMA wal_checkpoint(PASSIVE);", cancellationToken);
 
         return purged;
     }
@@ -731,17 +762,23 @@ public sealed class TelemetryRepository(IDbContextFactory<TelemetryDbContext> co
         return Math.Max(left.Value, right.Value);
     }
 
-    private static async Task<long> GetLogicalTelemetryBytes(System.Data.Common.DbConnection connection, CancellationToken cancellationToken)
+    private static async Task<long> GetUsedDatabaseBytes(
+        System.Data.Common.DbConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var pageCount = await ReadPragma("page_count", connection, cancellationToken);
+        var freePageCount = await ReadPragma("freelist_count", connection, cancellationToken);
+        var pageSize = await ReadPragma("page_size", connection, cancellationToken);
+        return Math.Max(0, pageCount - freePageCount) * pageSize;
+    }
+
+    private static async Task<long> ReadPragma(
+        string pragma,
+        System.Data.Common.DbConnection connection,
+        CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT COALESCE(SUM(
-                256 + length(COALESCE(AttributesJson, '')) + length(COALESCE(Body, '')) +
-                length(COALESCE(DetailsJson, '')) + length(COALESCE(ResourceAttributesJson, '')) +
-                length(COALESCE(Name, '')) + length(COALESCE(ServiceName, ''))
-            ), 0)
-            FROM TelemetryItems;
-            """;
+        command.CommandText = $"PRAGMA {pragma};";
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
     }
