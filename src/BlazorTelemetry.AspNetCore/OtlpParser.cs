@@ -18,6 +18,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         foreach (var resourceLogs in request.ResourceLogs)
         {
             var resource = valueConverter.ToDictionary(resourceLogs.Resource?.Attributes ?? []);
+            var resourceJson = JsonSerializer.Serialize(resource);
             var service = GetString(resource, "service.name") ?? fallbackService ?? "service-inconnu";
             foreach (var scopeLogs in resourceLogs.ScopeLogs)
             {
@@ -38,7 +39,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         SeverityNumber = (int)record.SeverityNumber,
                         TraceId = ToHex(record.TraceId),
                         SpanId = ToHex(record.SpanId),
-                        ResourceAttributesJson = JsonSerializer.Serialize(resource),
+                        ResourceAttributesJson = resourceJson,
                         AttributesJson = valueConverter.ToJson(record.Attributes),
                         DetailsJson = JsonSerializer.Serialize(new
                         {
@@ -61,6 +62,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         foreach (var resourceSpans in request.ResourceSpans)
         {
             var resource = valueConverter.ToDictionary(resourceSpans.Resource?.Attributes ?? []);
+            var resourceJson = JsonSerializer.Serialize(resource);
             var service = GetString(resource, "service.name") ?? fallbackService ?? "service-inconnu";
             foreach (var scopeSpans in resourceSpans.ScopeSpans)
             {
@@ -88,7 +90,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         DurationMs = duration,
                         StatusCode = (int)(span.Status?.Code ?? 0),
                         Body = span.Status?.Message,
-                        ResourceAttributesJson = JsonSerializer.Serialize(resource),
+                        ResourceAttributesJson = resourceJson,
                         AttributesJson = attributesJson,
                         DetailsJson = JsonSerializer.Serialize(new
                         {
@@ -127,7 +129,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             ParentSpanId = ToHex(span.ParentSpanId),
                             DurationMs = duration,
                             StatusCode = GetInt(attributes, "http.response.status_code") ?? GetInt(attributes, "http.status_code"),
-                            ResourceAttributesJson = JsonSerializer.Serialize(resource),
+                            ResourceAttributesJson = resourceJson,
                             AttributesJson = attributesJson,
                             DetailsJson = JsonSerializer.Serialize(new
                             {
@@ -150,12 +152,13 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         foreach (var resourceMetrics in request.ResourceMetrics)
         {
             var resource = valueConverter.ToDictionary(resourceMetrics.Resource?.Attributes ?? []);
+            var resourceJson = JsonSerializer.Serialize(resource);
             var service = GetString(resource, "service.name") ?? fallbackService ?? "service-inconnu";
             foreach (var scopeMetrics in resourceMetrics.ScopeMetrics)
             {
                 foreach (var metric in scopeMetrics.Metrics)
                 {
-                    ParseMetric(result, metric, service, resource, scopeMetrics.Scope?.Name);
+                    ParseMetric(result, metric, service, resource, resourceJson, scopeMetrics.Scope?.Name);
                 }
             }
         }
@@ -163,20 +166,26 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         return result;
     }
 
-    private void ParseMetric(List<TelemetryItem> result, Metric metric, string service, Dictionary<string, object?> resource, string? scope)
+    private void ParseMetric(
+        List<TelemetryItem> result,
+        Metric metric,
+        string service,
+        Dictionary<string, object?> resource,
+        string resourceJson,
+        string? scope)
     {
         switch (metric.DataCase)
         {
             case Metric.DataOneofCase.Gauge:
                 foreach (var point in metric.Gauge.DataPoints)
                 {
-                    AddNumberPoint(result, metric, point, "gauge", service, resource, scope, null);
+                    AddNumberPoint(result, metric, point, "gauge", service, resource, resourceJson, scope, null);
                 }
                 break;
             case Metric.DataOneofCase.Sum:
                 foreach (var point in metric.Sum.DataPoints)
                 {
-                    AddNumberPoint(result, metric, point, "sum", service, resource, scope, new
+                    AddNumberPoint(result, metric, point, "sum", service, resource, resourceJson, scope, new
                     {
                         aggregationTemporality = metric.Sum.AggregationTemporality.ToString(),
                         metric.Sum.IsMonotonic,
@@ -187,7 +196,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             case Metric.DataOneofCase.Histogram:
                 foreach (var point in metric.Histogram.DataPoints)
                 {
-                    AddMetric(result, metric, "histogram", service, resource, scope, point.TimeUnixNano, point.Attributes,
+                    AddMetric(result, metric, "histogram", service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes,
                         point.HasSum ? point.Sum : point.Count,
                         new
                         {
@@ -205,7 +214,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             case Metric.DataOneofCase.ExponentialHistogram:
                 foreach (var point in metric.ExponentialHistogram.DataPoints)
                 {
-                    AddMetric(result, metric, "exponential-histogram", service, resource, scope, point.TimeUnixNano, point.Attributes,
+                    AddMetric(result, metric, "exponential-histogram", service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes,
                         point.HasSum ? point.Sum : point.Count,
                         new
                         {
@@ -225,7 +234,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             case Metric.DataOneofCase.Summary:
                 foreach (var point in metric.Summary.DataPoints)
                 {
-                    AddMetric(result, metric, "summary", service, resource, scope, point.TimeUnixNano, point.Attributes,
+                    AddMetric(result, metric, "summary", service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes,
                         point.Sum,
                         new
                         {
@@ -238,14 +247,34 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         }
     }
 
-    private void AddNumberPoint(List<TelemetryItem> result, Metric metric, NumberDataPoint point, string type, string service, Dictionary<string, object?> resource, string? scope, object? details)
+    private void AddNumberPoint(
+        List<TelemetryItem> result,
+        Metric metric,
+        NumberDataPoint point,
+        string type,
+        string service,
+        Dictionary<string, object?> resource,
+        string resourceJson,
+        string? scope,
+        object? details)
     {
         var value = point.ValueCase == NumberDataPoint.ValueOneofCase.AsDouble ? point.AsDouble : point.AsInt;
-        AddMetric(result, metric, type, service, resource, scope, point.TimeUnixNano, point.Attributes, value,
+        AddMetric(result, metric, type, service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes, value,
             details ?? new { exemplars = SerializeExemplars(point.Exemplars) });
     }
 
-    private void AddMetric(List<TelemetryItem> result, Metric metric, string type, string service, Dictionary<string, object?> resource, string? scope, ulong timestampNano, IEnumerable<KeyValue> attributes, double value, object details)
+    private void AddMetric(
+        List<TelemetryItem> result,
+        Metric metric,
+        string type,
+        string service,
+        Dictionary<string, object?> resource,
+        string resourceJson,
+        string? scope,
+        ulong timestampNano,
+        IEnumerable<KeyValue> attributes,
+        double value,
+        object details)
     {
         var timestamp = FromUnixNano(timestampNano);
         var attributesJson = valueConverter.ToJson(attributes);
@@ -262,7 +291,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             Unit = metric.Unit,
             MetricType = type,
             NumericValue = value,
-            ResourceAttributesJson = JsonSerializer.Serialize(resource),
+            ResourceAttributesJson = resourceJson,
             AttributesJson = attributesJson,
             DetailsJson = JsonSerializer.Serialize(new { scope, data = details }),
             Fingerprint = Hash($"metric:{service}:{metric.Name}:{timestampNano}:{attributesJson}:{value}")

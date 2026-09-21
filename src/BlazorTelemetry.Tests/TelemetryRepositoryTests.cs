@@ -304,6 +304,28 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BlazorDashboardMetricsKeepTheNewestRowsWithinTheMemoryLimit()
+    {
+        var repository = new TelemetryRepository(
+            new TestDbContextFactory(_options),
+            new BlazorTelemetryOptions { MaximumDashboardMetricRows = 1 });
+        var now = DateTimeOffset.UtcNow;
+        await repository.Store([
+            CreateMetric(now.AddSeconds(-30), "aspnetcore.components.circuit.active", 2, "gauge", "{circuit}"),
+            CreateMetric(now.AddSeconds(-20), "aspnetcore.components.circuit.active", 3, "gauge", "{circuit}"),
+            CreateMetric(now.AddSeconds(-10), "aspnetcore.components.circuit.active", 4, "gauge", "{circuit}")
+        ], CancellationToken.None);
+
+        var dashboard = await repository.GetBlazorDashboardMetrics(
+            now.AddMinutes(-1),
+            "web",
+            CancellationToken.None);
+
+        Assert.Equal(4, dashboard.ActiveCircuits);
+        Assert.Single(dashboard.ActiveCircuitsSeries);
+    }
+
+    [Fact]
     public async Task DatabaseInitializerCreatesDefaultPerApplicationErrorRule()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-default-rule-{Guid.NewGuid():N}.db");

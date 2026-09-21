@@ -16,6 +16,10 @@ public static class BlazorTelemetryServiceCollectionExtensions
         services.AddOptions<BlazorTelemetryOptions>()
             .Bind(configuration.GetSection(BlazorTelemetryOptions.SECTION_NAME))
             .Validate(options => options.RawRetentionDays > 0 && options.MetricRetentionDays > 0, "Retention values must be positive.")
+            .Validate(options => options.QueueCapacity > 0, "The ingestion queue capacity must be positive.")
+            .Validate(options => options.MaximumDashboardMetricRows > 0, "The dashboard metric row limit must be positive.")
+            .Validate(options => options.DashboardRefreshIntervalSeconds > 0, "The dashboard refresh interval must be positive.")
+            .Validate(options => options.DbContextPoolSize > 0, "The database context pool size must be positive.")
             .ValidateOnStart();
 
         if (configure is not null)
@@ -29,7 +33,7 @@ public static class BlazorTelemetryServiceCollectionExtensions
         EnsureDatabaseDirectory(snapshot.ConnectionString);
 
         services.AddSingleton(serviceProvider => serviceProvider.GetRequiredService<IOptions<BlazorTelemetryOptions>>().Value);
-        services.AddBlazorTelemetrySqlite(snapshot.ConnectionString);
+        services.AddBlazorTelemetrySqlite(snapshot.ConnectionString, snapshot.DbContextPoolSize);
         services.AddRequestDecompression();
         services.AddGrpc(options => options.MaxReceiveMessageSize = snapshot.MaximumRequestBytes);
         services.AddSingleton<CollectorCounters>();

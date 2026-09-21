@@ -127,6 +127,7 @@ public static class OtlpEndpointRouteBuilderExtensions
         var walBytes = File.Exists(walPath) ? new FileInfo(walPath).Length : 0;
         var root = Path.GetPathRoot(Path.GetFullPath(databasePath)) ?? Path.GetPathRoot(Environment.CurrentDirectory)!;
         var available = new DriveInfo(root).AvailableFreeSpace;
+        var gcInfo = GC.GetGCMemoryInfo();
         return TypedResults.Ok(new BlazorTelemetry.Core.CollectorHealth(
             counters.Received,
             counters.Persisted,
@@ -135,7 +136,17 @@ public static class OtlpEndpointRouteBuilderExtensions
             counters.QueueDepth,
             databaseBytes,
             walBytes,
-            available));
+            available)
+        {
+            ServerGarbageCollection = System.Runtime.GCSettings.IsServerGC,
+            ProcessWorkingSetBytes = Environment.WorkingSet,
+            ManagedHeapBytes = GC.GetTotalMemory(false),
+            ManagedHeapCommittedBytes = gcInfo.TotalCommittedBytes,
+            ManagedHeapFragmentedBytes = gcInfo.FragmentedBytes,
+            ManagedTotalAllocatedBytes = GC.GetTotalAllocatedBytes(false),
+            GcMemoryLoadBytes = gcInfo.MemoryLoadBytes,
+            GcTotalAvailableMemoryBytes = gcInfo.TotalAvailableMemoryBytes
+        });
     }
 
     private static async Task<IResult> Persist(TelemetryIngestionQueue queue, IReadOnlyList<BlazorTelemetry.Core.TelemetryItem> items, IMessage response, CancellationToken cancellationToken)
