@@ -1,0 +1,102 @@
+@code {
+    [Parameter]
+    public EventCallback<TelemetryTimeRange> ValueChanged { get; set; }
+
+    private readonly string _id = $"bt-time-{Guid.NewGuid():N}";
+    private static readonly (string Expression, string Label)[] QUICK_RANGES =
+    [
+        ("now-1m", "Last minute"), ("now-5m", "Last 5 minutes"),
+        ("now-15m", "Last 15 minutes"), ("now-30m", "Last 30 minutes"),
+        ("now-1h", "Last 1 hour"), ("now-3h", "Last 3 hours"),
+        ("now-6h", "Last 6 hours"), ("now-12h", "Last 12 hours"),
+        ("now-24h", "Last 24 hours"), ("now-2d", "Last 2 days"), ("now-7d", "Last 7 days")
+    ];
+    private TelemetryTimeRange _value = new();
+    private string _from = "now-1h";
+    private string _to = "now";
+    private string _search = string.Empty;
+    private bool _open;
+    private bool _invalid;
+    private ElementReference _button;
+
+    private void Toggle()
+    {
+        _open = !_open;
+        _from = _value.From;
+        _to = _value.To;
+        _search = string.Empty;
+        _invalid = false;
+    }
+
+    private async Task Apply(TelemetryTimeRange _range)
+    {
+        _invalid = !_range.TryResolve(DateTimeOffset.UtcNow, out _, out _);
+        if (_invalid)
+        {
+            return;
+        }
+
+        _value = _range;
+        _open = false;
+        await _button.FocusAsync();
+        await ValueChanged.InvokeAsync(_range);
+    }
+
+    private async Task HandleKey(KeyboardEventArgs _args)
+    {
+        if (_args.Key == "Escape")
+        {
+            _open = false;
+            await _button.FocusAsync();
+        }
+    }
+}
+
+<div class="bt-time-picker" @onkeyup="HandleKey">
+    <button @ref="_button" type="button" class="bt-time-trigger" aria-expanded="@_open" aria-controls="@_id" @onclick="Toggle">
+        <svg class="bt-time-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+        @if (_value.To == "now" && QUICK_RANGES.FirstOrDefault(_range => _range.Expression == _value.From) is var _quick && _quick.Label is not null)
+        {
+            <span>@_quick.Label</span>
+        }
+        else
+        {
+            <span title="@($"{_value.From} → {_value.To}")">Custom time range</span>
+        }
+        <svg class="bt-time-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+    </button>
+    @if (_open)
+    {
+        <div id="@_id" class="bt-time-panel" role="region" aria-label="Time range">
+            <form class="bt-time-custom" @onsubmit="() => Apply(new(_from, _to))" @onsubmit:preventDefault>
+                <h2>Custom time range</h2>
+                <div class="form-floating">
+                    <input id="@(_id + "-from")" class="form-control" placeholder="now-1h" @bind="_from" @bind:event="oninput" aria-describedby="@(_id + "-help")" aria-invalid="@_invalid" />
+                    <label for="@(_id + "-from")">From</label>
+                </div>
+                <div class="form-floating">
+                    <input id="@(_id + "-to")" class="form-control" placeholder="now" @bind="_to" @bind:event="oninput" aria-describedby="@(_id + "-help")" aria-invalid="@_invalid" />
+                    <label for="@(_id + "-to")">To</label>
+                </div>
+                <p id="@(_id + "-help")">Use now, now-3h, or yyyy-MM-dd HH:mm. Absolute dates use UTC.</p>
+                @if (_invalid)
+                {
+                    <p class="bt-time-error" role="alert">Enter valid dates or relative times, with From earlier than To.</p>
+                }
+                <button type="submit" class="bt-time-apply">Apply time range</button>
+            </form>
+            <div class="bt-time-quick">
+                <div class="form-floating">
+                    <input id="@(_id + "-search")" class="form-control" type="search" placeholder="Search quick ranges" @bind="_search" @bind:event="oninput" />
+                    <label for="@(_id + "-search")">Search quick ranges</label>
+                </div>
+                <div class="bt-time-ranges">
+                    @foreach (var _range in QUICK_RANGES.Where(_range => _range.Label.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        <button type="button" aria-pressed="@(_value.From == _range.Expression && _value.To == "now")" @onclick="() => Apply(new(_range.Expression))">@_range.Label</button>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
