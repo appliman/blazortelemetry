@@ -144,14 +144,14 @@
                 var dashboardsTask = Repository.GetDashboards(_lifetime.Token);
                 var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
                 var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
-                var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
+                var metricsTask = Repository.GetResourceMetrics(fromUtc, toUtc, _selectedService, _lifetime.Token);
                 var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _selectedService, null, _lifetime.Token, toUtc);
                 var blazorDashboardTask = Repository.GetBlazorDashboardMetrics(fromUtc, _selectedService, _lifetime.Token, toUtc);
                 await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask, blazorDashboardTask);
                 _dashboards = await dashboardsTask;
                 _dashboardTraces = (await tracesTask).Items;
                 _dashboardLogs = (await logsTask).Items;
-                _dashboardMetrics = (await metricsTask).Items;
+                _dashboardMetrics = await metricsTask;
                 _dashboardBreakdown = await breakdownTask;
                 _blazorDashboard = await blazorDashboardTask;
             }

@@ -33,18 +33,11 @@
         ? BlazorMetrics.ConnectedCircuitsSeries.Select(point => new ChartPoint(point.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), point.Value)).ToArray()
         : MetricSeries("connection", "active", "current");
     private IReadOnlyList<ChartPoint> CurrentRequests => MetricSeries("request", "active", "current");
-    private IReadOnlyList<ChartPoint> CpuUsage => BuildCpuUsage();
-    private IReadOnlyList<ChartPoint> MemoryUsage => BuildMemoryUsage();
-    private DualSeries NetworkTraffic => BuildDirectionalRateSeries(
-        ["process.network.io", "system.network.io"],
-        "network.io.direction",
-        ["receive", "in", "rx"],
-        ["transmit", "out", "tx"]);
-    private DualSeries DiskTraffic => BuildDirectionalRateSeries(
-        ["process.disk.io", "system.disk.io"],
-        "disk.io.direction",
-        ["read"],
-        ["write"]);
+    private ProcessMetricSeries _processMetrics = ProcessMetricSeries.Empty;
+    private IReadOnlyList<ChartPoint> CpuUsage => ToChartPoints(_processMetrics.Cpu);
+    private IReadOnlyList<ChartPoint> MemoryUsage => ToChartPoints(_processMetrics.Memory);
+    private DualSeries NetworkTraffic => ToDualSeries(_processMetrics.Received, _processMetrics.Sent);
+    private DualSeries DiskTraffic => ToDualSeries(_processMetrics.Read, _processMetrics.Written);
     private long TotalRequests => Summary.Traces;
     private long TotalErrors => Logs.LongCount(IsError) + Traces.LongCount(item => item.StatusCode == 2);
     private IReadOnlyList<CountEntry> Endpoints => Traces.GroupBy(EndpointName).Select(group => new CountEntry(group.Key, group.LongCount())).OrderByDescending(item => item.Count).Take(10).ToArray();
@@ -135,123 +128,23 @@
             : $"{milliseconds.Value:N1} ms";
     }
 
-    private IReadOnlyList<ChartPoint> BuildCpuUsage()
+    protected override void OnParametersSet()
     {
-        var utilization = SelectMetricItems("process.cpu.utilization", "system.cpu.utilization");
-        if (utilization.Count > 0)
-        {
-            var active = utilization.Where(item => !string.Equals(ReadAttribute(item.AttributesJson, "cpu.mode"), "idle", StringComparison.OrdinalIgnoreCase)).ToArray();
-            var source = active.Length > 0 ? active : utilization;
-            return AggregateMetric(source, values => values.Sum(item => item.NumericValue!.Value) * (values.All(item => item.Unit == "%") ? 1 : 100));
-        }
-
-        var cpuTime = SelectMetricItems("process.cpu.time", "dotnet.process.cpu.time", "system.cpu.time");
-        var activeCpuTime = cpuTime.Where(item => !string.Equals(ReadAttribute(item.AttributesJson, "cpu.mode"), "idle", StringComparison.OrdinalIgnoreCase));
-        var processorCount = SelectMetricItems("dotnet.process.cpu.count", "system.cpu.logical.count").OrderBy(item => item.TimestampUtc).LastOrDefault()?.NumericValue ?? 1;
-        return BuildRatePoints(activeCpuTime, 100 / Math.Max(1, processorCount)).Select(point => new ChartPoint(point.Timestamp.ToLocalTime().ToString("HH:mm:ss"), point.Value)).ToArray();
+        _processMetrics = ProcessMetricSeries.Create(Metrics, FromUtc, ToUtc);
     }
 
-    private IReadOnlyList<ChartPoint> BuildMemoryUsage()
-    {
-        var memory = SelectMetricItems(
-            "process.memory.usage",
-            "dotnet.process.memory.working_set",
-            "system.memory.usage",
-            "dotnet.gc.last_collection.memory.committed_size",
-            "process.runtime.dotnet.gc.committed_memory.size",
-            "process.runtime.dotnet.gc.heap.size");
-        if (memory.Count == 0)
-        {
-            return [];
-        }
+    private static IReadOnlyList<ChartPoint> ToChartPoints(IReadOnlyList<MetricSeriesPoint> _points) =>
+        _points.Select(_point => new ChartPoint(_point.TimestampUtc.ToLocalTime().ToString("MM-dd HH:mm:ss"), _point.Value)).ToArray();
 
-        var usedMemory = memory.Where(item => string.Equals(ReadAttribute(item.AttributesJson, "system.memory.state", "state"), "used", StringComparison.OrdinalIgnoreCase)).ToArray();
-        var source = usedMemory.Length > 0 ? usedMemory : memory;
-        return AggregateMetric(source, values => values.Sum(item => ToBytes(item.NumericValue!.Value, item.Unit)) / 1024d / 1024d);
+    private static DualSeries ToDualSeries(IReadOnlyList<MetricSeriesPoint> _primary, IReadOnlyList<MetricSeriesPoint> _secondary)
+    {
+        var _timestamps = _primary.Select(_point => _point.TimestampUtc).Concat(_secondary.Select(_point => _point.TimestampUtc)).Distinct().Order().ToArray();
+        var _primaryValues = _primary.ToDictionary(_point => _point.TimestampUtc, _point => _point.Value);
+        var _secondaryValues = _secondary.ToDictionary(_point => _point.TimestampUtc, _point => _point.Value);
+        return new DualSeries(_timestamps.Select(_time => _time.ToLocalTime().ToString("MM-dd HH:mm:ss")).ToArray(),
+            _timestamps.Select(_time => _primaryValues.GetValueOrDefault(_time)).ToArray(),
+            _timestamps.Select(_time => _secondaryValues.GetValueOrDefault(_time)).ToArray());
     }
-
-    private DualSeries BuildDirectionalRateSeries(string[] metricNames, string attributeName, string[] primaryDirections, string[] secondaryDirections)
-    {
-        var items = SelectMetricItems(metricNames);
-        var primary = BuildRatePoints(items.Where(item => AttributeMatches(item, attributeName, primaryDirections)), 1d / 1024d);
-        var secondary = BuildRatePoints(items.Where(item => AttributeMatches(item, attributeName, secondaryDirections)), 1d / 1024d);
-        var timestamps = primary.Select(point => point.Timestamp)
-            .Concat(secondary.Select(point => point.Timestamp))
-            .Distinct()
-            .OrderBy(timestamp => timestamp)
-            .TakeLast(40)
-            .ToArray();
-        var primaryValues = primary.ToDictionary(point => point.Timestamp, point => point.Value);
-        var secondaryValues = secondary.ToDictionary(point => point.Timestamp, point => point.Value);
-        return new DualSeries(
-            timestamps.Select(timestamp => timestamp.ToLocalTime().ToString("HH:mm:ss")).ToArray(),
-            timestamps.Select(timestamp => primaryValues.GetValueOrDefault(timestamp)).ToArray(),
-            timestamps.Select(timestamp => secondaryValues.GetValueOrDefault(timestamp)).ToArray());
-    }
-
-    private IReadOnlyList<TelemetryItem> SelectMetricItems(params string[] names)
-    {
-        foreach (var name in names)
-        {
-            var matches = Metrics.Where(item => item.NumericValue.HasValue && double.IsFinite(item.NumericValue.Value) && string.Equals(item.Name, name, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (matches.Length > 0)
-            {
-                return matches;
-            }
-        }
-
-        return [];
-    }
-
-    private static IReadOnlyList<ChartPoint> AggregateMetric(IEnumerable<TelemetryItem> items, Func<IReadOnlyList<TelemetryItem>, double> aggregate)
-    {
-        return items.GroupBy(item => ToSecond(item.TimestampUtc))
-            .OrderBy(group => group.Key)
-            .TakeLast(40)
-            .Select(group => new ChartPoint(group.Key.ToLocalTime().ToString("HH:mm:ss"), aggregate(group.ToArray())))
-            .ToArray();
-    }
-
-    private static IReadOnlyList<TimePoint> BuildRatePoints(IEnumerable<TelemetryItem> items, double multiplier)
-    {
-        var totals = items.GroupBy(item => ToSecond(item.TimestampUtc))
-            .OrderBy(group => group.Key)
-            .Select(group => new TimePoint(group.Key, group.Sum(item => ToBytes(item.NumericValue!.Value, item.Unit))))
-            .ToArray();
-        var result = new List<TimePoint>();
-        for (var index = 1; index < totals.Length; index++)
-        {
-            var elapsedSeconds = (totals[index].Timestamp - totals[index - 1].Timestamp).TotalSeconds;
-            var delta = totals[index].Value - totals[index - 1].Value;
-            if (elapsedSeconds > 0 && delta >= 0)
-            {
-                result.Add(new TimePoint(totals[index].Timestamp, delta / elapsedSeconds * multiplier));
-            }
-        }
-
-        return result.TakeLast(40).ToArray();
-    }
-
-    private static bool AttributeMatches(TelemetryItem item, string attributeName, IReadOnlyCollection<string> values)
-    {
-        var direction = ReadAttribute(item.AttributesJson, attributeName, "direction");
-        return direction is not null && values.Contains(direction, StringComparer.OrdinalIgnoreCase);
-    }
-
-    private static DateTimeOffset ToSecond(DateTimeOffset value)
-    {
-        var utc = value.ToUniversalTime();
-        return new DateTimeOffset(utc.Ticks - utc.Ticks % TimeSpan.TicksPerSecond, TimeSpan.Zero);
-    }
-
-    private static double ToBytes(double value, string? unit) => unit?.ToLowerInvariant() switch
-    {
-        "kby" or "kib" => value * 1024d,
-        "mby" or "mib" => value * 1024d * 1024d,
-        "gby" or "gib" => value * 1024d * 1024d * 1024d,
-        _ => value
-    };
-
     private static bool IsError(TelemetryItem item) => (item.SeverityNumber ?? 0) >= 17;
 
     private static string EndpointName(TelemetryItem item)
@@ -330,7 +223,6 @@
     }
 
     private sealed record ChartPoint(string Label, double Value);
-    private sealed record TimePoint(DateTimeOffset Timestamp, double Value);
     private sealed record DualSeries(IReadOnlyList<string> Labels, IReadOnlyList<double> Primary, IReadOnlyList<double> Secondary);
     private sealed record CountEntry(string Name, long Count);
     private sealed record ProtocolBreakdown(string PrimaryName, long Primary, string SecondaryName, long Secondary);
@@ -489,12 +381,12 @@
             else { <TelemetryChart Labels="MemoryUsage.Select(point => point.Label).ToArray()" Values="MemoryUsage.Select(point => point.Value).ToArray()" Unit="MiB" Color="#76e4b8" Height="210" /> }
         </article>
         <article class="bt-monitor-card bt-resource-chart">
-            <header><h2>Network bandwidth</h2><span>receive / transmit</span></header>
+            <header><h2>Network bandwidth</h2><span>process · .NET sockets</span></header>
             @if (NetworkTraffic.Labels.Count == 0) { <div class="bt-no-data resource-empty">No network I/O metrics</div> }
             else { <TelemetryChart Labels="NetworkTraffic.Labels" Values="NetworkTraffic.Primary" SecondaryValues="NetworkTraffic.Secondary" SeriesLabel="Receive" SecondarySeriesLabel="Transmit" Unit="KiB/s" Color="#78a9ff" SecondaryColor="#c792ea" Height="210" /> }
         </article>
         <article class="bt-monitor-card bt-resource-chart">
-            <header><h2>Disk I/O</h2><span>read / write</span></header>
+            <header><h2>@if (_processMetrics.IncludesNonDiskIo) { <text>Process I/O</text> } else { <text>Disk I/O</text> }</h2><span>@if (_processMetrics.IncludesNonDiskIo) { <text>files, network and devices</text> } else { <text>process · read / write</text> }</span></header>
             @if (DiskTraffic.Labels.Count == 0) { <div class="bt-no-data resource-empty">No disk I/O metrics</div> }
             else { <TelemetryChart Labels="DiskTraffic.Labels" Values="DiskTraffic.Primary" SecondaryValues="DiskTraffic.Secondary" SeriesLabel="Read" SecondarySeriesLabel="Write" Unit="KiB/s" Color="#f3bd62" SecondaryColor="#ff7b72" Height="210" /> }
         </article>
