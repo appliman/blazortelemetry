@@ -74,6 +74,7 @@ public sealed class BlazorTelemetryClientOptions
     public bool EntityFrameworkMetricsEnabled { get; set; } = true;
     public bool HttpClientInstrumentationEnabled { get; set; } = true;
     public bool RuntimeInstrumentationEnabled { get; set; } = true;
+    public bool ProcessInstrumentationEnabled { get; set; } = true;
     public bool CaptureDatabaseStatements { get; set; }
     public bool RecordExceptions { get; set; } = true;
     public bool IncludeFormattedLogMessage { get; set; } = true;

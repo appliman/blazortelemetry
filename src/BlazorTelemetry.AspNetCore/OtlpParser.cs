@@ -188,6 +188,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                     AddNumberPoint(result, metric, point, "sum", service, resource, resourceJson, scope, new
                     {
                         aggregationTemporality = metric.Sum.AggregationTemporality.ToString(),
+                        startTimeUnixNano = point.StartTimeUnixNano,
                         metric.Sum.IsMonotonic,
                         exemplars = SerializeExemplars(point.Exemplars)
                     });
@@ -294,7 +295,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             ResourceAttributesJson = resourceJson,
             AttributesJson = attributesJson,
             DetailsJson = JsonSerializer.Serialize(new { scope, data = details }),
-            Fingerprint = Hash($"metric:{service}:{metric.Name}:{timestampNano}:{attributesJson}:{value}")
+            Fingerprint = Hash($"metric:{service}:{resourceJson}:{scope}:{metric.Name}:{timestampNano}:{attributesJson}:{value}")
         });
     }
 
