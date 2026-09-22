@@ -200,10 +200,26 @@ public sealed class TelemetryRepository(
         return new TelemetryPage(items, total, total > skip + items.Count);
     }
 
-    public async Task<TelemetrySummary> GetSummary(DateTimeOffset fromUtc, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<string>> GetServices(DateTimeOffset fromUtc, DateTimeOffset toUtc, CancellationToken cancellationToken)
+    {
+        await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await _context.TelemetryItems.AsNoTracking()
+            .Where(_item => _item.TimestampUtc >= fromUtc && _item.TimestampUtc <= toUtc)
+            .Select(_item => _item.ServiceName).Distinct().OrderBy(_name => _name).ToListAsync(cancellationToken);
+    }
+
+    public async Task<TelemetrySummary> GetSummary(DateTimeOffset fromUtc, CancellationToken cancellationToken, DateTimeOffset? toUtc = null, string? serviceName = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var source = context.TelemetryItems.AsNoTracking().Where(item => item.TimestampUtc >= fromUtc);
+        if (toUtc.HasValue)
+        {
+            source = source.Where(_item => _item.TimestampUtc <= toUtc.Value);
+        }
+        if (!string.IsNullOrWhiteSpace(serviceName))
+        {
+            source = source.Where(_item => _item.ServiceName == serviceName);
+        }
         var logs = await source.LongCountAsync(item => item.Kind == TelemetryKind.Log, cancellationToken);
         var traces = await source.LongCountAsync(item => item.Kind == TelemetryKind.Trace, cancellationToken);
         var metrics = await source.LongCountAsync(item => item.Kind == TelemetryKind.Metric, cancellationToken);
@@ -225,7 +241,8 @@ public sealed class TelemetryRepository(
         DateTimeOffset fromUtc,
         string? serviceName,
         string? excludedRequestServiceName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTimeOffset? toUtc = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var requests = context.TelemetryItems.AsNoTracking()
@@ -235,6 +252,12 @@ public sealed class TelemetryRepository(
                 && item.Name == "blazortelemetry.entity_framework.commands"
                 && item.TimestampUtc >= fromUtc
                 && item.NumericValue.HasValue);
+
+        if (toUtc.HasValue)
+        {
+            requests = requests.Where(_item => _item.TimestampUtc <= toUtc.Value);
+            entityFrameworkMetrics = entityFrameworkMetrics.Where(_item => _item.TimestampUtc <= toUtc.Value);
+        }
 
         if (!string.IsNullOrWhiteSpace(serviceName))
         {
@@ -288,13 +311,19 @@ public sealed class TelemetryRepository(
     public async Task<BlazorDashboardMetrics> GetBlazorDashboardMetrics(
         DateTimeOffset fromUtc,
         string? serviceName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DateTimeOffset? toUtc = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var source = context.TelemetryItems.AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Metric
                 && item.TimestampUtc >= fromUtc
                 && BLAZOR_METRIC_NAMES.Contains(item.Name));
+
+        if (toUtc.HasValue)
+        {
+            source = source.Where(_item => _item.TimestampUtc <= toUtc.Value);
+        }
 
         if (!string.IsNullOrWhiteSpace(serviceName))
         {
@@ -424,11 +453,15 @@ public sealed class TelemetryRepository(
         return counts.ToDictionary(item => item.ServiceName, item => item.Count, StringComparer.Ordinal);
     }
 
-    public async Task<IReadOnlyList<MetricSeriesPoint>> GetMetricSeries(string name, string? serviceName, DateTimeOffset fromUtc, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<MetricSeriesPoint>> GetMetricSeries(string name, string? serviceName, DateTimeOffset fromUtc, CancellationToken cancellationToken, DateTimeOffset? toUtc = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var source = context.TelemetryItems.AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Metric && item.Name == name && item.TimestampUtc >= fromUtc && item.NumericValue.HasValue);
+        if (toUtc.HasValue)
+        {
+            source = source.Where(_item => _item.TimestampUtc <= toUtc.Value);
+        }
         if (!string.IsNullOrWhiteSpace(serviceName))
         {
             source = source.Where(item => item.ServiceName == serviceName);

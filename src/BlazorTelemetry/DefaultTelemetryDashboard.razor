@@ -17,6 +17,12 @@
     [Parameter, EditorRequired]
     public BlazorDashboardMetrics BlazorMetrics { get; set; } = BlazorDashboardMetrics.Empty;
 
+    [Parameter]
+    public DateTimeOffset FromUtc { get; set; } = DateTimeOffset.UtcNow.AddHours(-1);
+
+    [Parameter]
+    public DateTimeOffset ToUtc { get; set; } = DateTimeOffset.UtcNow;
+
     private static readonly string[] HTTP_METHOD_ORDER = ["GET", "POST", "HEAD", "PATCH", "PUT", "DELETE", "OPTIONS"];
     private static readonly string[] ENTITY_FRAMEWORK_OPERATION_ORDER = ["read", "insert", "update", "delete"];
 
@@ -61,7 +67,7 @@
         || BlazorMetrics.TopRoutes.Count > 0
         || BlazorMetrics.SlowestEventHandlers.Count > 0;
     private long DisconnectedCircuits => Math.Max(0, BlazorMetrics.ActiveCircuits - BlazorMetrics.ConnectedCircuits);
-    private double NavigationsPerMinute => BlazorMetrics.Navigations / 60d;
+    private double NavigationsPerMinute => BlazorMetrics.Navigations / Math.Max((ToUtc - FromUtc).TotalMinutes, 1d / 60);
     private DualSeries CircuitSeries => BuildCircuitSeries();
     private double MaxEndpointCount => Math.Max(1, Endpoints.FirstOrDefault()?.Count ?? 1);
     private double MaxErrorEndpointCount => Math.Max(1, ErrorEndpoints.FirstOrDefault()?.Count ?? 1);
@@ -79,24 +85,24 @@
             return Summary.Services.Count == 0 ? [] : [new ChartPoint(DateTimeOffset.Now.ToString("HH:mm:ss"), Summary.Services.Count)];
         }
 
-        var now = DateTimeOffset.UtcNow;
+        var _bucketTicks = Math.Max(1, (ToUtc - FromUtc).Ticks / 12);
         return Enumerable.Range(0, 12).Select(index =>
         {
-            var start = now.AddMinutes(-(11 - index) * 5);
-            var end = start.AddMinutes(5);
-            return new ChartPoint(start.ToLocalTime().ToString("HH:mm"), Traces.Count(item => item.TimestampUtc >= start && item.TimestampUtc < end));
+            var start = FromUtc.AddTicks(index * _bucketTicks);
+            var end = index == 11 ? ToUtc : start.AddTicks(_bucketTicks);
+            return new ChartPoint(start.ToLocalTime().ToString("MM-dd HH:mm:ss"), Traces.Count(item => item.TimestampUtc >= start && (item.TimestampUtc < end || index == 11 && item.TimestampUtc == end)));
         }).ToArray();
     }
 
     private IReadOnlyList<ChartPoint> BuildErrorRate()
     {
         if (Traces.Count == 0) return [];
-        var now = DateTimeOffset.UtcNow;
+        var _bucketTicks = Math.Max(1, (ToUtc - FromUtc).Ticks / 12);
         return Enumerable.Range(0, 12).Select(index =>
         {
-            var start = now.AddMinutes(-(11 - index) * 5);
-            var end = start.AddMinutes(5);
-            var bucket = Traces.Where(item => item.TimestampUtc >= start && item.TimestampUtc < end).ToArray();
+            var start = FromUtc.AddTicks(index * _bucketTicks);
+            var end = index == 11 ? ToUtc : start.AddTicks(_bucketTicks);
+            var bucket = Traces.Where(item => item.TimestampUtc >= start && (item.TimestampUtc < end || index == 11 && item.TimestampUtc == end)).ToArray();
             var value = bucket.Length == 0 ? 0 : bucket.Count(item => item.StatusCode == 2) * 100d / bucket.Length;
             return new ChartPoint(start.ToLocalTime().ToString("HH:mm"), value);
         }).ToArray();
@@ -333,12 +339,12 @@
 <section class="bt-default-dashboard" aria-label="Default operational dashboard">
     <div class="bt-dashboard-primary">
         <article class="bt-monitor-card bt-large-chart">
-            <header><h2>Request duration</h2><span>last hour</span></header>
+            <header><h2>Request duration</h2><span>selected period</span></header>
             @if (RequestDuration.Count == 0) { <div class="bt-no-data">No data</div> }
             else { <TelemetryChart Labels="RequestDuration.Select(point => point.Label).ToArray()" Values="RequestDuration.Select(point => point.Value).ToArray()" Unit="ms" Color="#78a9ff" Height="270" /> }
         </article>
         <article class="bt-monitor-card bt-large-chart">
-            <header><h2>Error rate</h2><span>% over 5 minutes</span></header>
+            <header><h2>Error rate</h2><span>% per time bucket</span></header>
             @if (ErrorRate.Count == 0) { <div class="bt-no-data">No data</div> }
             else { <TelemetryChart Labels="ErrorRate.Select(point => point.Label).ToArray()" Values="ErrorRate.Select(point => point.Value).ToArray()" Unit="%" Color="#ff7b72" Height="270" /> }
         </article>
@@ -360,7 +366,7 @@
 
         <div class="bt-kpi-grid">
             <article class="bt-kpi-card total"><h2>Total requests</h2><strong>@TotalRequests.ToString("N0")</strong><span>@Summary.Services.Count observed services</span></article>
-            <article class="bt-kpi-card errors"><h2>Unhandled exceptions</h2><strong>@TotalErrors.ToString("N0")</strong><span>over the last hour</span></article>
+            <article class="bt-kpi-card errors"><h2>Unhandled exceptions</h2><strong>@TotalErrors.ToString("N0")</strong><span>in the selected period</span></article>
             <article class="bt-split-card secured">
                 <h2>Secured requests</h2>
                 <div><section><span>@Security.SecondaryName</span><strong>@Security.Secondary.ToString("N0")</strong></section><section><span>@Security.PrimaryName</span><strong>@Security.Primary.ToString("N0")</strong></section></div>
@@ -374,7 +380,7 @@
 
     <section class="bt-blazor-section" aria-labelledby="bt-blazor-heading">
         <header class="bt-blazor-heading">
-            <div><h2 id="bt-blazor-heading">Blazor runtime</h2><p>Circuits, navigation, component lifecycle, and browser event handling · last hour</p></div>
+            <div><h2 id="bt-blazor-heading">Blazor runtime</h2><p>Circuits, navigation, component lifecycle, and browser event handling · selected period</p></div>
             <span class="@(HasBlazorData ? "available" : null)">@(HasBlazorData ? "Telemetry active" : "Waiting for Blazor metrics")</span>
         </header>
 
@@ -387,7 +393,7 @@
             <div class="bt-blazor-kpis">
                 <article><span>Active circuits</span><strong>@BlazorMetrics.ActiveCircuits.ToString("N0")</strong><small>@DisconnectedCircuits.ToString("N0") temporarily disconnected</small></article>
                 <article><span>Connected circuits</span><strong>@BlazorMetrics.ConnectedCircuits.ToString("N0")</strong><small>live SignalR sessions</small></article>
-                <article><span>Navigations / min</span><strong>@NavigationsPerMinute.ToString("N1")</strong><small>@BlazorMetrics.Navigations.ToString("N0") over the last hour</small></article>
+                <article><span>Navigations / min</span><strong>@NavigationsPerMinute.ToString("N1")</strong><small>@BlazorMetrics.Navigations.ToString("N0") in the selected period</small></article>
                 <article class="@(BlazorMetrics.Errors > 0 ? "has-error" : null)"><span>UI errors</span><strong>@BlazorMetrics.Errors.ToString("N0")</strong><small>navigation, lifecycle, and events</small></article>
             </div>
 

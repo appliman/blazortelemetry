@@ -26,6 +26,47 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DisplayQueriesRespectTimeBoundsAndApplicationWithoutShrinkingApplicationChoices()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _from = new DateTimeOffset(2026, 9, 22, 8, 0, 0, TimeSpan.Zero);
+        var _to = _from.AddHours(3);
+        foreach (var _service in new[] { "app-a", "app-b" })
+        {
+            foreach (var _timestamp in new[] { _from.AddMilliseconds(-1), _from, _to, _to.AddMilliseconds(1) })
+            {
+                await _repository.Store([
+                    new() { Kind = TelemetryKind.Log, ServiceName = _service, TimestampUtc = _timestamp, Name = "log" },
+                    new() { Kind = TelemetryKind.Trace, ServiceName = _service, TimestampUtc = _timestamp, Name = "trace", DurationMs = 10 },
+                    new() { Kind = TelemetryKind.Request, ServiceName = _service, TimestampUtc = _timestamp, Name = "/test", Body = "GET", StatusCode = 200 },
+                    new() { Kind = TelemetryKind.Metric, ServiceName = _service, TimestampUtc = _timestamp, Name = "aspnetcore.components.circuit.active", NumericValue = _timestamp > _to ? 999 : 3 }
+                ], CancellationToken.None);
+            }
+        }
+
+        var _summary = await _repository.GetSummary(_from, CancellationToken.None, _to, "app-a");
+        Assert.Equal(2, _summary.Logs);
+        Assert.Equal(2, _summary.Traces);
+        Assert.Equal(2, _summary.Metrics);
+        Assert.Equal("app-a", Assert.Single(_summary.Services));
+        Assert.Equal(new[] { "app-a", "app-b" }, await _repository.GetServices(_from, _to, CancellationToken.None));
+        var _page = await _repository.Query(new(ServiceName: "app-a", FromUtc: _from, ToUtc: _to), CancellationToken.None);
+        Assert.Equal(8, _page.Total);
+        Assert.All(_page.Items, _item => Assert.InRange(_item.TimestampUtc, _from, _to));
+        var _breakdown = await _repository.GetDashboardBreakdown(_from, "app-a", null, CancellationToken.None, _to);
+        Assert.Equal(2, _breakdown.HttpMethods["GET"]);
+        Assert.Equal(2, _breakdown.HttpStatuses[200]);
+        var _blazor = await _repository.GetBlazorDashboardMetrics(_from, "app-a", CancellationToken.None, _to);
+        Assert.Equal(3, _blazor.ActiveCircuits);
+        var _series = await _repository.GetMetricSeries("aspnetcore.components.circuit.active", "app-a", _from, CancellationToken.None, _to);
+        Assert.Equal(2, _series.Count);
+        Assert.All(_series, _point => Assert.Equal(3, _point.Value));
+        var _empty = await _repository.GetSummary(_from, CancellationToken.None, _to, "missing-app");
+        Assert.Equal(0, _empty.Logs);
+        Assert.Empty(_empty.Services);
+    }
+
+    [Fact]
     public async Task RequestCollectionTracksArbitraryRoutesAndCompletion()
     {
         var _repository = new TelemetryRepository(new TestDbContextFactory(_options));

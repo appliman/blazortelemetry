@@ -15,6 +15,10 @@
     private string _activeView = "dashboards";
     private string _search = string.Empty;
     private string? _service;
+    private IReadOnlyList<string> _services = [];
+    private TelemetryTimeRange _timeRange = new();
+    private DateTimeOffset _fromUtc;
+    private DateTimeOffset _toUtc;
     private string _logLevel = string.Empty;
     private string _requestStatus = string.Empty;
     private bool _paused;
@@ -78,8 +82,16 @@
         try
         {
             _error = null;
-            var fromUtc = DateTimeOffset.UtcNow.AddHours(-1);
-            _summary = await Repository.GetSummary(fromUtc, _lifetime.Token);
+            if (!_timeRange.TryResolve(DateTimeOffset.UtcNow, out var fromUtc, out var toUtc))
+            {
+                _error = "The time range is invalid. Select a valid time range.";
+                return;
+            }
+            var _selectedService = _service;
+            _fromUtc = fromUtc;
+            _toUtc = toUtc;
+            _services = await Repository.GetServices(fromUtc, toUtc, _lifetime.Token);
+            _summary = await Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService);
             if (_activeView is "logs" or "traces" or "metrics" or "requests")
             {
                 var kind = _activeView switch
@@ -97,10 +109,11 @@
                     : (null, null, null);
                 _page = await Repository.Query(new TelemetryQuery(
                     kind,
-                    _service,
+                    _selectedService,
                     _search,
                     _selectedTraceId,
                     fromUtc,
+                    toUtc,
                     Take: 200,
                     MinimumSeverityNumber: minimumSeverityNumber,
                     MaximumSeverityNumber: maximumSeverityNumber,
@@ -110,10 +123,14 @@
                     HasStatusCode: hasStatusCode), _lifetime.Token);
                 if (_activeView == "metrics")
                 {
-                    _selectedMetric ??= _page.Items.FirstOrDefault()?.Name;
+                    if (!_page.Items.Any(_item => _item.Name == _selectedMetric))
+                    {
+                        _selectedMetric = _page.Items.FirstOrDefault()?.Name;
+                    }
+                    _series = [];
                     if (_selectedMetric is not null)
                     {
-                        _series = await Repository.GetMetricSeries(_selectedMetric, _service, fromUtc, _lifetime.Token);
+                        _series = await Repository.GetMetricSeries(_selectedMetric, _selectedService, fromUtc, _lifetime.Token, toUtc);
                     }
                 }
             }
@@ -125,11 +142,11 @@
             else if (_activeView == "dashboards")
             {
                 var dashboardsTask = Repository.GetDashboards(_lifetime.Token);
-                var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _service, FromUtc: fromUtc, Take: 200), _lifetime.Token);
-                var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _service, FromUtc: fromUtc, Take: 200), _lifetime.Token);
-                var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _service, FromUtc: fromUtc, Take: 200), _lifetime.Token);
-                var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _service, null, _lifetime.Token);
-                var blazorDashboardTask = Repository.GetBlazorDashboardMetrics(fromUtc, _service, _lifetime.Token);
+                var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
+                var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
+                var metricsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
+                var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _selectedService, null, _lifetime.Token, toUtc);
+                var blazorDashboardTask = Repository.GetBlazorDashboardMetrics(fromUtc, _selectedService, _lifetime.Token, toUtc);
                 await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask, blazorDashboardTask);
                 _dashboards = await dashboardsTask;
                 _dashboardTraces = (await tracesTask).Items;
@@ -152,6 +169,23 @@
                 StateHasChanged();
             }
         }
+    }
+
+    private async Task ChangeTimeRange(TelemetryTimeRange _range)
+    {
+        _timeRange = _range;
+        await ChangeFilters();
+    }
+
+    private async Task ChangeFilters()
+    {
+        _selectedTraceId = null;
+        _selectedLog = null;
+        _selectedSpan = null;
+        _selectedMetric = null;
+        _collapsedSpans.Clear();
+        _expandedTraces.Clear();
+        await Refresh();
     }
 
     private async Task SelectView(string view)
@@ -310,7 +344,7 @@
     private async Task SelectMetric(string name)
     {
         _selectedMetric = name;
-        _series = await Repository.GetMetricSeries(name, _service, DateTimeOffset.UtcNow.AddHours(-1), _lifetime.Token);
+        await Refresh();
     }
 
     private async Task SaveRule()
@@ -472,7 +506,7 @@
         _ => (null, null, null)
     };
     private string ViewTitle() => _activeView switch { "requests" => "Requests", "summary" => "Overview", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboards", "alerts" => "Alert center", _ => "Administration" };
-    private string ViewSubtitle() => _activeView switch { "requests" => "Live HTTP requests and recent route activity · last hour", "summary" => "An immediate view of your applications' health", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
+    private string ViewSubtitle() => _activeView switch { "requests" => "Live HTTP requests and recent route activity · selected period", "summary" => "An immediate view of your applications' health", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
 
     private static string RequestAttribute(string json, string key)
     {
@@ -572,13 +606,18 @@
             </div>
             <div class="bt-toolbar-actions">
                 <label class="bt-search"><span class="visually-hidden">Search</span><input @bind="_search" @bind:event="oninput" @onchange="Refresh" placeholder="Search telemetry" /></label>
-                <select @bind="_service" @bind:after="Refresh" aria-label="Filter by service">
-                    <option value="">All services</option>
-                    @foreach (var service in _summary.Services)
+                <select @bind="_service" @bind:after="ChangeFilters" aria-label="Filter by application">
+                    <option value="">All applications</option>
+                    @if (!string.IsNullOrWhiteSpace(_service) && !_services.Contains(_service))
+                    {
+                        <option value="@_service">@_service (no data)</option>
+                    }
+                    @foreach (var service in _services)
                     {
                         <option value="@service">@service</option>
                     }
                 </select>
+                <TelemetryTimeRangePicker ValueChanged="ChangeTimeRange" />
                 @if (_activeView == "logs")
                 {
                     <label class="bt-level-filter">
@@ -624,7 +663,7 @@
         else if (_activeView == "summary")
         {
             <div class="bt-stat-strip">
-                <article><small>Logs received</small><strong>@FormatNumber(_summary.Logs)</strong><span>over the last hour</span></article>
+                <article><small>Logs received</small><strong>@FormatNumber(_summary.Logs)</strong><span>in the selected period</span></article>
                 <article><small>Spans</small><strong>@FormatNumber(_summary.Traces)</strong><span>correlated by trace</span></article>
                 <article><small>Metric points</small><strong>@FormatNumber(_summary.Metrics)</strong><span>all instruments</span></article>
                 <article class="@(_summary.Errors > 0 ? "has-error" : null)"><small>Errors</small><strong>@FormatNumber(_summary.Errors)</strong><span>logs and spans</span></article>
@@ -632,7 +671,7 @@
             </div>
             <div class="bt-summary-grid">
                 <section class="bt-signal-map">
-                    <div class="bt-section-heading"><div><h2>Signal map</h2><p>Activity received over the last hour</p></div><span>@_summary.Services.Count services</span></div>
+                    <div class="bt-section-heading"><div><h2>Signal map</h2><p>Activity received in the selected period</p></div><span>@_summary.Services.Count services</span></div>
                     @if (_summary.Services.Count == 0)
                     {
                         <div class="bt-empty"><strong>Waiting for telemetry</strong><p>Configure an OTLP gRPC exporter to send data to this server.</p><code>OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317</code></div>
@@ -663,7 +702,7 @@
                 @if (_activeView == "metrics" && _selectedMetric is not null)
                 {
                     <section class="bt-metric-focus">
-                        <div class="bt-section-heading"><div><h2>@_selectedMetric</h2><p>@_series.Count points · last hour</p></div></div>
+                        <div class="bt-section-heading"><div><h2>@_selectedMetric</h2><p>@_series.Count points · selected period</p></div></div>
                         <TelemetryChart Labels="@_series.Select(point => point.TimestampUtc.ToLocalTime().ToString("HH:mm:ss")).ToList()" Values="@_series.Select(point => point.Value).ToList()" />
                     </section>
                 }
@@ -805,7 +844,7 @@
         }
         else if (_activeView == "dashboards")
         {
-            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" />
+            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" FromUtc="_fromUtc" ToUtc="_toUtc" />
             <div class="bt-saved-dashboard-heading"><div><h2>Shared dashboards</h2><p>Additional views saved by the team</p></div><AuthorizeView Policy="@Options.AdministratorPolicy" Context="authorizationContext"><button class="bt-primary" @onclick="CreateDashboard">New dashboard</button></AuthorizeView></div>
             <div class="bt-dashboard-grid bt-saved-dashboard-grid">
                 @foreach (var dashboard in _dashboards)
