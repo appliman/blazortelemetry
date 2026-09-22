@@ -250,7 +250,6 @@ public sealed class TelemetryRepository(
         var entityFrameworkMetrics = context.TelemetryItems.AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Metric
                 && item.Name == "blazortelemetry.entity_framework.commands"
-                && item.TimestampUtc >= fromUtc
                 && item.NumericValue.HasValue);
 
         if (toUtc.HasValue)
@@ -280,32 +279,77 @@ public sealed class TelemetryRepository(
             .GroupBy(item => item.StatusCode!.Value)
             .Select(group => new { Status = group.Key, Count = group.LongCount() })
             .ToListAsync(cancellationToken);
-        var metricRows = await entityFrameworkMetrics
+        var _baselines = await entityFrameworkMetrics.Where(_item => _item.TimestampUtc < fromUtc)
             .GroupBy(item => new { item.ServiceName, item.ResourceAttributesJson, item.AttributesJson })
-            .Select(group => group
-                .OrderByDescending(item => item.TimestampUtc)
-                .Select(item => new
-                {
-                    item.AttributesJson,
-                    Value = item.NumericValue!.Value
-                })
-                .First())
+            .Select(_group => _group.OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id).First())
             .ToListAsync(cancellationToken);
+        var _previous = _baselines.GroupBy(MetricCounter.SeriesKey).ToDictionary(_group => _group.Key, _group => _group.MaxBy(_item => _item.TimestampUtc)!);
+        var operations = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        await foreach (var _item in entityFrameworkMetrics.Where(_item => _item.TimestampUtc >= fromUtc)
+            .OrderBy(_item => _item.TimestampUtc).ThenBy(_item => _item.Id).AsAsyncEnumerable().WithCancellation(cancellationToken))
+        {
+            var _key = MetricCounter.SeriesKey(_item);
+            var _increment = MetricCounter.Increment(_item, _previous.GetValueOrDefault(_key), fromUtc);
+            var _operation = ReadMetricAttribute(_item.AttributesJson, "db.operation.type");
+            if (_operation is not null)
+            {
+                operations.TryAdd(_operation, 0);
+                if (_increment.HasValue)
+                {
+                    operations[_operation] += Convert.ToInt64(_increment.Value, System.Globalization.CultureInfo.InvariantCulture);
+                }
+            }
+            _previous[_key] = _item;
+        }
 
         var methods = methodRows
             .GroupBy(item => item.Method.Trim().ToUpperInvariant(), StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Sum(item => item.Count), StringComparer.OrdinalIgnoreCase);
         var statuses = statusRows.ToDictionary(item => item.Status, item => item.Count);
-        var operations = metricRows
-            .Select(item => new { Operation = ReadMetricAttribute(item.AttributesJson, "db.operation.type"), item.Value })
-            .Where(item => item.Operation is not null)
-            .GroupBy(item => item.Operation!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.Sum(item => Convert.ToInt64(Math.Max(0, item.Value), System.Globalization.CultureInfo.InvariantCulture)),
-                StringComparer.OrdinalIgnoreCase);
 
         return new DashboardBreakdown(methods, statuses, operations);
+    }
+
+    public async Task<IReadOnlyList<TelemetryItem>> GetResourceMetrics(DateTimeOffset fromUtc, DateTimeOffset toUtc, string? serviceName, CancellationToken cancellationToken)
+    {
+        await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var _source = _context.TelemetryItems.AsNoTracking().Where(_item => _item.Kind == TelemetryKind.Metric
+            && _item.TimestampUtc <= toUtc && _item.NumericValue.HasValue);
+        if (!string.IsNullOrWhiteSpace(serviceName))
+        {
+            _source = _source.Where(_item => _item.ServiceName == serviceName);
+        }
+
+        var _result = new List<TelemetryItem>();
+        // Each instrument has its own budget; busy EF/HTTP instruments cannot evict process metrics.
+        var _maximumRows = Math.Max(2, options?.MaximumDashboardMetricRows ?? 5_000);
+        foreach (var _name in ResourceMetricNames.All)
+        {
+            var _instrument = _source.Where(_item => _item.Name == _name);
+            var _points = await _instrument.Where(_item => _item.TimestampUtc >= fromUtc)
+                .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
+                .Take(_maximumRows).ToListAsync(cancellationToken);
+            if (_points.Count == 0)
+            {
+                continue;
+            }
+            var _firstTimestamp = _points.Min(_item => _item.TimestampUtc);
+            var _latestTimestamps = _instrument.Where(_item => _item.TimestampUtc < _firstTimestamp)
+                .GroupBy(_item => new { _item.ServiceName, _item.ResourceAttributesJson, _item.AttributesJson })
+                .Select(_group => new { _group.Key.ServiceName, _group.Key.ResourceAttributesJson, _group.Key.AttributesJson, TimestampUtc = _group.Max(_item => _item.TimestampUtc) });
+            var _baselineQuery = from _item in _instrument
+                                 join _latest in _latestTimestamps
+                                 on new { _item.ServiceName, _item.ResourceAttributesJson, _item.AttributesJson, _item.TimestampUtc }
+                                 equals new { _latest.ServiceName, _latest.ResourceAttributesJson, _latest.AttributesJson, _latest.TimestampUtc }
+                                 select _item;
+            var _baselines = await _baselineQuery
+                .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
+                .Take(_maximumRows).ToListAsync(cancellationToken);
+            var _series = _points.Select(MetricCounter.SeriesKey).ToHashSet();
+            _result.AddRange(_baselines.Where(_item => _series.Contains(MetricCounter.SeriesKey(_item))));
+            _result.AddRange(_points);
+        }
+        return _result;
     }
 
     public async Task<BlazorDashboardMetrics> GetBlazorDashboardMetrics(

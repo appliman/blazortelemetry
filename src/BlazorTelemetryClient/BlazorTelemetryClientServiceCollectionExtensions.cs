@@ -26,6 +26,10 @@ public static class BlazorTelemetryClientServiceCollectionExtensions
 
         services.TryAddSingleton(options);
         ConfigureEntityFrameworkMetrics(services, options);
+        if (options.MetricsEnabled && options.ProcessInstrumentationEnabled)
+        {
+            services.AddHostedService<ProcessTelemetry>();
+        }
         ConfigureLogging(services, options);
 
         var builder = services.AddOpenTelemetry()
@@ -211,6 +215,10 @@ public static class BlazorTelemetryClientServiceCollectionExtensions
 
     private static void ConfigureMetrics(MeterProviderBuilder metrics, BlazorTelemetryClientOptions options)
     {
+        if (options.ProcessInstrumentationEnabled)
+        {
+            metrics.AddMeter(ProcessTelemetry.METER_NAME);
+        }
         if (options.AspNetCoreInstrumentationEnabled)
         {
             metrics.AddAspNetCoreInstrumentation();

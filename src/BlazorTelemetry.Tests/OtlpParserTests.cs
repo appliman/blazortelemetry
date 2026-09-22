@@ -133,6 +133,28 @@ public sealed class OtlpParserTests
         Assert.Equal(42, item.NumericValue);
     }
 
+    [Fact]
+    public void ParseMetricsPreservesCounterStartAndDistinguishesInstances()
+    {
+        var _request = new ExportMetricsServiceRequest();
+        foreach (var _instance in new[] { "a", "b" })
+        {
+            var _resource = CreateResource();
+            _resource.Attributes.Add(new KeyValue { Key = "service.instance.id", Value = new AnyValue { StringValue = _instance } });
+            _request.ResourceMetrics.Add(new ResourceMetrics { Resource = _resource, ScopeMetrics =
+            {
+                new ScopeMetrics { Metrics =
+                {
+                    new Metric { Name = "commands", Sum = new Sum { AggregationTemporality = AggregationTemporality.Cumulative, IsMonotonic = true,
+                        DataPoints = { new NumberDataPoint { TimeUnixNano = 1_700_000_010_000_000_000, StartTimeUnixNano = 1_700_000_000_000_000_000, AsInt = 42 } } } }
+                } }
+            } });
+        }
+        var _items = _parser.ParseMetrics(_request, null);
+        Assert.Equal(2, _items.Count);
+        Assert.NotEqual(_items[0].Fingerprint, _items[1].Fingerprint);
+        Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000), MetricCounter.StartTime(_items[0]));
+    }
     private static Resource CreateResource()
     {
         return new Resource
@@ -140,4 +162,5 @@ public sealed class OtlpParserTests
             Attributes = { new KeyValue { Key = "service.name", Value = new AnyValue { StringValue = "checkout" } } }
         };
     }
+
 }

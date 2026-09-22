@@ -67,6 +67,48 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ResourceMetricsSurviveBusyInstrumentsAndKeepRateBaselines()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _from = DateTimeOffset.Parse("2026-09-22T10:00:00Z");
+        await _repository.Store([
+            ProcessMetricSeriesTests.Item("process.cpu.time", _from.AddSeconds(-10), 100),
+            ProcessMetricSeriesTests.Item("process.cpu.time", _from, 102),
+            ProcessMetricSeriesTests.Item("process.cpu.time", _from.AddMinutes(2), 900),
+            ProcessMetricSeriesTests.Item("process.memory.usage", _from, 1024 * 1024)
+        ], CancellationToken.None);
+        await _repository.Store(Enumerable.Range(0, 600).Select(_index => ProcessMetricSeriesTests.Item("busy.instrument", _from.AddSeconds(30), _index)).ToArray(), CancellationToken.None);
+        var _items = await _repository.GetResourceMetrics(_from, _from.AddMinutes(1), "app", CancellationToken.None);
+        Assert.Equal(3, _items.Count);
+        Assert.DoesNotContain(_items, _item => _item.Name == "busy.instrument" || _item.TimestampUtc > _from.AddMinutes(1));
+        Assert.Single(ProcessMetricSeries.Create(_items, _from, _from.AddMinutes(1)).Cpu);
+        Assert.Empty(await _repository.GetResourceMetrics(_from, _from.AddMinutes(1), "other", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task EntityFrameworkWindowUsesBaselineResetDeltaAndUpperBound()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _from = DateTimeOffset.Parse("2026-09-22T10:00:00Z");
+        var _items = new[] { (-10, 1000d), (10, 1007d), (20, 3d), (30, 8d), (90, 10000d) }
+            .Select(_point => ProcessMetricSeriesTests.Item("blazortelemetry.entity_framework.commands", _from.AddSeconds(_point.Item1), _point.Item2,
+                _attributes: "{\"db.operation.type\":\"read\"}")).ToList();
+        foreach (var _seconds in new[] { 10, 20 })
+        {
+            var _delta = ProcessMetricSeriesTests.Item("blazortelemetry.entity_framework.commands", _from.AddSeconds(_seconds), 4, "b", "{\"db.operation.type\":\"insert\"}");
+            _delta.DetailsJson = "{\"data\":{\"aggregationTemporality\":\"Delta\"}}";
+            _items.Add(_delta);
+        }
+        await _repository.Store(_items, CancellationToken.None);
+        var _hour = await _repository.GetDashboardBreakdown(_from, "app", null, CancellationToken.None, _from.AddMinutes(1));
+        Assert.Equal(15, _hour.EntityFrameworkOperations["read"]);
+        Assert.Equal(8, _hour.EntityFrameworkOperations["insert"]);
+        var _narrow = await _repository.GetDashboardBreakdown(_from.AddSeconds(15), "app", null, CancellationToken.None, _from.AddSeconds(25));
+        Assert.Equal(3, _narrow.EntityFrameworkOperations["read"]);
+        Assert.Equal(4, _narrow.EntityFrameworkOperations["insert"]);
+    }
+
+    [Fact]
     public async Task RequestCollectionTracksArbitraryRoutesAndCompletion()
     {
         var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
@@ -275,7 +317,7 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DashboardBreakdownAggregatesRequestsAndLatestEntityFrameworkCountersBeforePagination()
+    public async Task DashboardBreakdownAggregatesRequestsAndEntityFrameworkIncrementsBeforePagination()
     {
         var repository = new TelemetryRepository(new TestDbContextFactory(_options));
         var now = DateTimeOffset.UtcNow;
@@ -299,8 +341,8 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
         Assert.Equal(1, breakdown.HttpStatuses[200]);
         Assert.Equal(1, breakdown.HttpStatuses[201]);
         Assert.DoesNotContain(404, breakdown.HttpStatuses.Keys);
-        Assert.Equal(7, breakdown.EntityFrameworkOperations["read"]);
-        Assert.Equal(2, breakdown.EntityFrameworkOperations["insert"]);
+        Assert.Equal(3, breakdown.EntityFrameworkOperations["read"]);
+        Assert.Equal(0, breakdown.EntityFrameworkOperations["insert"]);
     }
 
     [Fact]
