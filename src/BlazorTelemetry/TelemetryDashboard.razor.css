@@ -112,7 +112,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .bt-toolbar-health { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; color: var(--text); font-size: 10px; letter-spacing: .02em; }
 .bt-toolbar-health i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 2px 10px #76e4b870; }
 .bt-toolbar-health small { color: var(--muted); font-size: inherit; }
-.bt-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.bt-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .bt-level-filter { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .bt-level-filter select { min-width: 118px; }
 .bt-toolbar input, .bt-toolbar select { height: 36px; color: var(--text); background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; }
