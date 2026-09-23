@@ -34,6 +34,9 @@
         : MetricSeries("connection", "active", "current");
     private IReadOnlyList<ChartPoint> CurrentRequests => MetricSeries("request", "active", "current");
     private ProcessMetricSeries _processMetrics = ProcessMetricSeries.Empty;
+    private IReadOnlyList<TelemetryItem>? _processedMetrics;
+    private DateTimeOffset _processedFromUtc;
+    private DateTimeOffset _processedToUtc;
     private IReadOnlyList<ChartPoint> CpuUsage => ToChartPoints(_processMetrics.Cpu);
     private IReadOnlyList<ChartPoint> MemoryUsage => ToChartPoints(_processMetrics.Memory);
     private DualSeries NetworkTraffic => ToDualSeries(_processMetrics.Received, _processMetrics.Sent);
@@ -130,7 +133,13 @@
 
     protected override void OnParametersSet()
     {
-        _processMetrics = ProcessMetricSeries.Create(Metrics, FromUtc, ToUtc);
+        if (!ReferenceEquals(_processedMetrics, Metrics) || _processedFromUtc != FromUtc || _processedToUtc != ToUtc)
+        {
+            _processMetrics = ProcessMetricSeries.Create(Metrics, FromUtc, ToUtc);
+            _processedMetrics = Metrics;
+            _processedFromUtc = FromUtc;
+            _processedToUtc = ToUtc;
+        }
     }
 
     private static IReadOnlyList<ChartPoint> ToChartPoints(IReadOnlyList<MetricSeriesPoint> _points) =>

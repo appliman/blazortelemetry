@@ -1,6 +1,7 @@
 using BlazorTelemetry.Core;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Linq.Expressions;
 
 namespace BlazorTelemetry.Sqlite;
 
@@ -8,6 +9,21 @@ public sealed class TelemetryRepository(
     IDbContextFactory<TelemetryDbContext> contextFactory,
     BlazorTelemetryOptions? options = null) : ITelemetryRepository
 {
+    private static readonly Expression<Func<TelemetryItem, TelemetryItem>> METRIC_PROJECTION = _item => new TelemetryItem
+    {
+        Id = _item.Id,
+        Kind = _item.Kind,
+        TimestampUtc = _item.TimestampUtc,
+        ServiceName = _item.ServiceName,
+        Name = _item.Name,
+        Unit = _item.Unit,
+        MetricType = _item.MetricType,
+        NumericValue = _item.NumericValue,
+        ResourceAttributesJson = _item.ResourceAttributesJson,
+        AttributesJson = _item.AttributesJson,
+        DetailsJson = _item.DetailsJson
+    };
+
     private static readonly string[] BLAZOR_METRIC_NAMES =
     [
         "aspnetcore.components.navigation",
@@ -279,14 +295,15 @@ public sealed class TelemetryRepository(
             .GroupBy(item => item.StatusCode!.Value)
             .Select(group => new { Status = group.Key, Count = group.LongCount() })
             .ToListAsync(cancellationToken);
-        var _baselines = await entityFrameworkMetrics.Where(_item => _item.TimestampUtc < fromUtc)
-            .GroupBy(item => new { item.ServiceName, item.ResourceAttributesJson, item.AttributesJson })
-            .Select(_group => _group.OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id).First())
+        var _window = entityFrameworkMetrics.Where(_item => _item.TimestampUtc >= fromUtc);
+        var _baselines = await MetricBaselines(context.TelemetryItems, entityFrameworkMetrics, _window, fromUtc)
+            .Select(METRIC_PROJECTION)
             .ToListAsync(cancellationToken);
         var _previous = _baselines.GroupBy(MetricCounter.SeriesKey).ToDictionary(_group => _group.Key, _group => _group.MaxBy(_item => _item.TimestampUtc)!);
         var operations = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-        await foreach (var _item in entityFrameworkMetrics.Where(_item => _item.TimestampUtc >= fromUtc)
-            .OrderBy(_item => _item.TimestampUtc).ThenBy(_item => _item.Id).AsAsyncEnumerable().WithCancellation(cancellationToken))
+        await foreach (var _item in _window
+            .OrderBy(_item => _item.TimestampUtc).ThenBy(_item => _item.Id)
+            .Select(METRIC_PROJECTION).AsAsyncEnumerable().WithCancellation(cancellationToken))
         {
             var _key = MetricCounter.SeriesKey(_item);
             var _increment = MetricCounter.Increment(_item, _previous.GetValueOrDefault(_key), fromUtc);
@@ -321,32 +338,32 @@ public sealed class TelemetryRepository(
         }
 
         var _result = new List<TelemetryItem>();
-        // Each instrument has its own budget; busy EF/HTTP instruments cannot evict process metrics.
-        var _maximumRows = Math.Max(2, options?.MaximumDashboardMetricRows ?? 5_000);
-        foreach (var _name in ResourceMetricNames.All)
+        // Share one budget, including baselines, across instruments. Unrelated instruments
+        // cannot evict process metrics and historical/retired instances are never loaded.
+        var _maximumRows = Math.Max(1, options?.MaximumDashboardMetricRows ?? 5_000);
+        for (var _index = 0; _index < ResourceMetricNames.All.Count; _index++)
         {
+            var _name = ResourceMetricNames.All[_index];
+            var _budget = _maximumRows / ResourceMetricNames.All.Count
+                + (_index < _maximumRows % ResourceMetricNames.All.Count ? 1 : 0);
+            if (_budget == 0)
+            {
+                continue;
+            }
             var _instrument = _source.Where(_item => _item.Name == _name);
-            var _points = await _instrument.Where(_item => _item.TimestampUtc >= fromUtc)
+            var _pointsQuery = _instrument.Where(_item => _item.TimestampUtc >= fromUtc)
                 .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
-                .Take(_maximumRows).ToListAsync(cancellationToken);
+                .Take((_budget + 1) / 2);
+            var _points = await _pointsQuery.Select(METRIC_PROJECTION).ToListAsync(cancellationToken);
             if (_points.Count == 0)
             {
                 continue;
             }
             var _firstTimestamp = _points.Min(_item => _item.TimestampUtc);
-            var _latestTimestamps = _instrument.Where(_item => _item.TimestampUtc < _firstTimestamp)
-                .GroupBy(_item => new { _item.ServiceName, _item.ResourceAttributesJson, _item.AttributesJson })
-                .Select(_group => new { _group.Key.ServiceName, _group.Key.ResourceAttributesJson, _group.Key.AttributesJson, TimestampUtc = _group.Max(_item => _item.TimestampUtc) });
-            var _baselineQuery = from _item in _instrument
-                                 join _latest in _latestTimestamps
-                                 on new { _item.ServiceName, _item.ResourceAttributesJson, _item.AttributesJson, _item.TimestampUtc }
-                                 equals new { _latest.ServiceName, _latest.ResourceAttributesJson, _latest.AttributesJson, _latest.TimestampUtc }
-                                 select _item;
-            var _baselines = await _baselineQuery
+            var _baselines = await MetricBaselines(_context.TelemetryItems, _instrument, _pointsQuery, _firstTimestamp)
                 .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
-                .Take(_maximumRows).ToListAsync(cancellationToken);
-            var _series = _points.Select(MetricCounter.SeriesKey).ToHashSet();
-            _result.AddRange(_baselines.Where(_item => _series.Contains(MetricCounter.SeriesKey(_item))));
+                .Take(_budget - _points.Count).Select(METRIC_PROJECTION).ToListAsync(cancellationToken);
+            _result.AddRange(_baselines);
             _result.AddRange(_points);
         }
         return _result;
@@ -880,4 +897,19 @@ public sealed class TelemetryRepository(
             return null;
         }
     }
+    private static IQueryable<TelemetryItem> MetricBaselines(DbSet<TelemetryItem> _items, IQueryable<TelemetryItem> _source, IQueryable<TelemetryItem> _points, DateTimeOffset _beforeUtc)
+    {
+        var _series = _points.Select(_item => new { _item.ServiceName, _item.ResourceAttributesJson, _item.AttributesJson }).Distinct();
+        // A scalar indexed lookup per active series, instead of sorting all retained
+        // metric payloads with ROW_NUMBER or grouping the complete history.
+        var _ids = _series.Select(_seriesItem => _source
+            .Where(_item => _item.ServiceName == _seriesItem.ServiceName
+                && _item.ResourceAttributesJson == _seriesItem.ResourceAttributesJson
+                && _item.AttributesJson == _seriesItem.AttributesJson
+                && _item.TimestampUtc < _beforeUtc)
+            .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
+            .Select(_item => (long?)_item.Id).FirstOrDefault());
+        return _items.AsNoTracking().Where(_item => _ids.Contains(_item.Id));
+    }
+
 }

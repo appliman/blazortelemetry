@@ -10,7 +10,8 @@
 
     private static readonly string? _assemblyVersion = typeof(TelemetryDashboard).Assembly.GetName().Version?.ToString(4);
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private Task? _refreshTask;
+    private bool _refreshRequested;
     private Task? _refreshLoopTask;
     private string _activeView = "dashboards";
     private string _search = string.Empty;
@@ -52,12 +53,6 @@
     private DashboardBreakdown _dashboardBreakdown = DashboardBreakdown.Empty;
     private BlazorDashboardMetrics _blazorDashboard = BlazorDashboardMetrics.Empty;
 
-    protected override async Task OnInitializedAsync()
-    {
-        await Refresh();
-        _refreshLoopTask = RefreshLoop(_lifetime.Token);
-    }
-
     private async Task RefreshLoop(CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Options.DashboardRefreshIntervalSeconds));
@@ -65,7 +60,7 @@
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                if (!_paused)
+                if (!_paused && _refreshTask is null)
                 {
                     await InvokeAsync(Refresh);
                 }
@@ -76,9 +71,33 @@
         }
     }
 
-    private async Task Refresh()
+    private Task Refresh()
     {
-        await _refreshLock.WaitAsync(_lifetime.Token);
+        _refreshRequested = true;
+        return _refreshTask ??= RefreshPending();
+    }
+
+    private async Task RefreshPending()
+    {
+        // Publish the task before any synchronous SQLite work can complete.
+        await Task.Yield();
+        try
+        {
+            do
+            {
+                _refreshRequested = false;
+                await RefreshData();
+            }
+            while (_refreshRequested && !_lifetime.IsCancellationRequested);
+        }
+        finally
+        {
+            _refreshTask = null;
+        }
+    }
+
+    private async Task RefreshData()
+    {
         try
         {
             _error = null;
@@ -90,38 +109,43 @@
             var _selectedService = _service;
             _fromUtc = fromUtc;
             _toUtc = toUtc;
-            _services = await Repository.GetServices(fromUtc, toUtc, _lifetime.Token);
-            _summary = await Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService);
-            if (_activeView is "logs" or "traces" or "metrics" or "requests")
+            var _view = _activeView;
+            var _querySearch = _search;
+            var _queryTrace = _selectedTraceId;
+            var _queryLogLevel = _logLevel;
+            var _queryRequestStatus = _requestStatus;
+            await LoadPanel(() => Repository.GetServices(fromUtc, toUtc, _lifetime.Token), _result => _services = _result);
+            await LoadPanel(() => Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService), _result => _summary = _result);
+            if (_view is "logs" or "traces" or "metrics" or "requests")
             {
-                var kind = _activeView switch
+                var kind = _view switch
                 {
                     "logs" => TelemetryKind.Log,
                     "traces" => TelemetryKind.Trace,
                     "requests" => TelemetryKind.Request,
                     _ => TelemetryKind.Metric
                 };
-                var (minimumSeverityNumber, maximumSeverityNumber) = _activeView == "logs"
-                    ? LogSeverityRange(_logLevel)
+                var (minimumSeverityNumber, maximumSeverityNumber) = _view == "logs"
+                    ? LogSeverityRange(_queryLogLevel)
                     : (null, null);
-                var (minimumStatusCode, maximumStatusCode, hasStatusCode) = _activeView == "requests"
-                    ? RequestStatusRange(_requestStatus)
+                var (minimumStatusCode, maximumStatusCode, hasStatusCode) = _view == "requests"
+                    ? RequestStatusRange(_queryRequestStatus)
                     : (null, null, null);
-                _page = await Repository.Query(new TelemetryQuery(
+                await LoadPanel(() => Repository.Query(new TelemetryQuery(
                     kind,
                     _selectedService,
-                    _search,
-                    _selectedTraceId,
+                    _querySearch,
+                    _queryTrace,
                     fromUtc,
                     toUtc,
                     Take: 200,
                     MinimumSeverityNumber: minimumSeverityNumber,
                     MaximumSeverityNumber: maximumSeverityNumber,
-                    ExcludedServiceName: _activeView == "requests" ? HostEnvironment.ApplicationName : null,
+                    ExcludedServiceName: _view == "requests" ? HostEnvironment.ApplicationName : null,
                     MinimumStatusCode: minimumStatusCode,
                     MaximumStatusCode: maximumStatusCode,
-                    HasStatusCode: hasStatusCode), _lifetime.Token);
-                if (_activeView == "metrics")
+                    HasStatusCode: hasStatusCode), _lifetime.Token), _result => _page = _result);
+                if (_view == "metrics" && !_refreshRequested)
                 {
                     if (!_page.Items.Any(_item => _item.Name == _selectedMetric))
                     {
@@ -130,31 +154,28 @@
                     _series = [];
                     if (_selectedMetric is not null)
                     {
-                        _series = await Repository.GetMetricSeries(_selectedMetric, _selectedService, fromUtc, _lifetime.Token, toUtc);
+                        var _name = _selectedMetric;
+                        await LoadPanel(() => Repository.GetMetricSeries(_name, _selectedService, fromUtc, _lifetime.Token, toUtc), _result => _series = _result);
                     }
                 }
             }
-            else if (_activeView == "alerts")
+            else if (_view == "alerts")
             {
-                _rules = await Repository.GetAlertRules(_lifetime.Token);
-                _incidents = await Repository.GetIncidents(true, _lifetime.Token);
+                await LoadPanel(() => Repository.GetAlertRules(_lifetime.Token), _result => _rules = _result);
+                await LoadPanel(() => Repository.GetIncidents(true, _lifetime.Token), _result => _incidents = _result);
             }
-            else if (_activeView == "dashboards")
+            else if (_view == "dashboards")
             {
-                var dashboardsTask = Repository.GetDashboards(_lifetime.Token);
-                var tracesTask = Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
-                var logsTask = Repository.Query(new TelemetryQuery(TelemetryKind.Log, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
-                var metricsTask = Repository.GetResourceMetrics(fromUtc, toUtc, _selectedService, _lifetime.Token);
-                var breakdownTask = Repository.GetDashboardBreakdown(fromUtc, _selectedService, null, _lifetime.Token, toUtc);
-                var blazorDashboardTask = Repository.GetBlazorDashboardMetrics(fromUtc, _selectedService, _lifetime.Token, toUtc);
-                await Task.WhenAll(dashboardsTask, tracesTask, logsTask, metricsTask, breakdownTask, blazorDashboardTask);
-                _dashboards = await dashboardsTask;
-                _dashboardTraces = (await tracesTask).Items;
-                _dashboardLogs = (await logsTask).Items;
-                _dashboardMetrics = await metricsTask;
-                _dashboardBreakdown = await breakdownTask;
-                _blazorDashboard = await blazorDashboardTask;
+                await LoadPanel(() => Repository.GetDashboards(_lifetime.Token), _result => _dashboards = _result);
+                await LoadPanel(() => Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token), _result => _dashboardTraces = _result.Items);
+                await LoadPanel(() => Repository.Query(new TelemetryQuery(TelemetryKind.Log, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token), _result => _dashboardLogs = _result.Items);
+                await LoadPanel(() => Repository.GetResourceMetrics(fromUtc, toUtc, _selectedService, _lifetime.Token), _result => _dashboardMetrics = _result);
+                await LoadPanel(() => Repository.GetDashboardBreakdown(fromUtc, _selectedService, null, _lifetime.Token, toUtc), _result => _dashboardBreakdown = _result);
+                await LoadPanel(() => Repository.GetBlazorDashboardMetrics(fromUtc, _selectedService, _lifetime.Token, toUtc), _result => _blazorDashboard = _result);
             }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
         }
         catch (Exception exception)
         {
@@ -163,10 +184,39 @@
         finally
         {
             _loading = false;
-            _refreshLock.Release();
             if (!_lifetime.IsCancellationRequested)
             {
                 StateHasChanged();
+            }
+        }
+    }
+
+    private async Task LoadPanel<T>(Func<Task<T>> _load, Action<T> _apply)
+    {
+        if (_refreshRequested || _lifetime.IsCancellationRequested)
+        {
+            return;
+        }
+        try
+        {
+            // Microsoft.Data.Sqlite executes async queries synchronously. Keep them off
+            // the circuit dispatcher, with only one database operation per refresh.
+            var _result = await Task.Run(_load, _lifetime.Token);
+            if (!_refreshRequested && !_lifetime.IsCancellationRequested)
+            {
+                _apply(_result);
+                _loading = false;
+                StateHasChanged();
+            }
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception _exception)
+        {
+            if (!_refreshRequested && !_lifetime.IsCancellationRequested)
+            {
+                _error = $"Some data is unavailable: {_exception.Message}";
             }
         }
     }
@@ -443,6 +493,15 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender)
+        {
+            // Do not query twice during prerender or delay the initial HTML response.
+            await Refresh();
+            if (!_lifetime.IsCancellationRequested)
+            {
+                _refreshLoopTask = RefreshLoop(_lifetime.Token);
+            }
+        }
         if (_focusSpanDrawer)
         {
             _focusSpanDrawer = false;
@@ -542,6 +601,10 @@
     public async ValueTask DisposeAsync()
     {
         _lifetime.Cancel();
+        if (_refreshTask is not null)
+        {
+            await _refreshTask;
+        }
         if (_refreshLoopTask is not null)
         {
             try
@@ -564,7 +627,6 @@
             }
         }
 
-        _refreshLock.Dispose();
         _lifetime.Dispose();
     }
 }
@@ -656,7 +718,7 @@
         {
             <div class="bt-error" role="alert">@_error <button @onclick="Refresh">Retry</button></div>
         }
-        else if (_loading)
+        @if (_loading)
         {
             <div class="bt-loading" aria-live="polite"><span></span>Loading signals…</div>
         }
