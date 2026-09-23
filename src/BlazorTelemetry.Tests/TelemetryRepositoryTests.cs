@@ -2,6 +2,8 @@ using BlazorTelemetry.AspNetCore;
 using BlazorTelemetry.Core;
 using BlazorTelemetry.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -83,6 +85,60 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
         Assert.DoesNotContain(_items, _item => _item.Name == "busy.instrument" || _item.TimestampUtc > _from.AddMinutes(1));
         Assert.Single(ProcessMetricSeries.Create(_items, _from, _from.AddMinutes(1)).Cpu);
         Assert.Empty(await _repository.GetResourceMetrics(_from, _from.AddMinutes(1), "other", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ResourceMetricsShareOneBudgetAndDoNotLoadUnrelatedPayloadsOrRetiredInstances()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options), new BlazorTelemetryOptions { MaximumDashboardMetricRows = 128 });
+        var _from = DateTimeOffset.Parse("2026-09-22T10:00:00Z");
+        foreach (var _name in ResourceMetricNames.All)
+        {
+            var _items = Enumerable.Range(-100, 200).Select(_index =>
+            {
+                var _item = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(_index), 1000 + _index);
+                _item.Body = new string('x', 4096);
+                return _item;
+            }).ToList();
+            _items.AddRange(Enumerable.Range(0, 100).Select(_index => ProcessMetricSeriesTests.Item(
+                _name, _from.AddSeconds(-1), 999, $"retired-{_index}")));
+            await _repository.Store(_items, CancellationToken.None);
+        }
+
+        var _metrics = await _repository.GetResourceMetrics(_from, _from.AddSeconds(100), null, CancellationToken.None);
+        Assert.InRange(_metrics.Count, 1, 128);
+        Assert.Equal(ResourceMetricNames.All.Count, _metrics.Select(_item => _item.Name).Distinct().Count());
+        Assert.All(_metrics, _item =>
+        {
+            Assert.Null(_item.Body);
+            Assert.DoesNotContain("retired-", _item.ResourceAttributesJson);
+        });
+        // Each counter retains the predecessor needed to calculate its first visible rate.
+        foreach (var _name in ResourceMetricNames.All)
+        {
+            Assert.Equal(5, _metrics.Count(_item => _item.Name == _name));
+        }
+    }
+
+    [Fact]
+    public async Task EntityFrameworkBaselineKeepsDistantHistoryOnlyForActiveSeries()
+    {
+        var _repository = new TelemetryRepository(new TestDbContextFactory(_options));
+        var _from = DateTimeOffset.Parse("2026-09-22T10:00:00Z");
+        const string _name = "blazortelemetry.entity_framework.commands";
+        const string _attributes = "{\"db.operation.type\":\"read\"}";
+        await _repository.Store([
+            ProcessMetricSeriesTests.Item(_name, _from.AddDays(-20), 1000, _attributes: _attributes),
+            ProcessMetricSeriesTests.Item(_name, _from, 1005, _attributes: _attributes),
+            ProcessMetricSeriesTests.Item(_name, _from.AddMinutes(1), 1010, _attributes: _attributes)
+        ], CancellationToken.None);
+        await _repository.Store(Enumerable.Range(0, 2000).Select(_index => ProcessMetricSeriesTests.Item(
+            _name, _from.AddDays(-1), 5000, $"retired-{_index}", _attributes)).ToArray(), CancellationToken.None);
+
+        var _breakdown = await _repository.GetDashboardBreakdown(_from, null, null, CancellationToken.None, _from.AddMinutes(1));
+        Assert.Equal(10, _breakdown.EntityFrameworkOperations["read"]);
+        var _empty = await _repository.GetDashboardBreakdown(_from.AddDays(1), null, null, CancellationToken.None, _from.AddDays(2));
+        Assert.Empty(_empty.EntityFrameworkOperations);
     }
 
     [Fact]
@@ -406,6 +462,39 @@ public sealed class TelemetryRepositoryTests : IAsyncLifetime
 
         Assert.Equal(4, dashboard.ActiveCircuits);
         Assert.Single(dashboard.ActiveCircuitsSeries);
+    }
+
+    [Fact]
+    public async Task MetricIndexMigrationPreservesExistingDataAndSupportsTimeRangeQueries()
+    {
+        var _path = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-upgrade-{Guid.NewGuid():N}.db");
+        var _options = new DbContextOptionsBuilder<TelemetryDbContext>().UseSqlite($"Data Source={_path}").Options;
+        try
+        {
+            await using var _context = new TelemetryDbContext(_options);
+            await _context.GetService<IMigrator>().MigrateAsync("20260916144728_InitialTelemetrySchema");
+            _context.TelemetryItems.Add(CreateMetric(DateTimeOffset.UtcNow, "process.cpu.time", 10, "sum", "s"));
+            await _context.SaveChangesAsync();
+
+            await _context.Database.MigrateAsync();
+            Assert.Equal(10, (await _context.TelemetryItems.AsNoTracking().SingleAsync()).NumericValue);
+            await _context.Database.OpenConnectionAsync();
+            using var _command = _context.Database.GetDbConnection().CreateCommand();
+            _command.CommandText = "EXPLAIN QUERY PLAN SELECT Id FROM TelemetryItems WHERE Kind = 3 AND Name = 'process.cpu.time' AND TimestampUtc >= 0 ORDER BY TimestampUtc DESC LIMIT 100";
+            await using var _reader = await _command.ExecuteReaderAsync();
+            var _plan = new List<string>();
+            while (await _reader.ReadAsync())
+            {
+                _plan.Add(_reader.GetString(3));
+            }
+            Assert.Contains(_plan, _line => _line.Contains("IX_TelemetryItems_Kind_Name_TimestampUtc", StringComparison.Ordinal));
+            Assert.DoesNotContain(_plan, _line => _line.Contains("TEMP B-TREE", StringComparison.Ordinal));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            File.Delete(_path);
+        }
     }
 
     [Fact]

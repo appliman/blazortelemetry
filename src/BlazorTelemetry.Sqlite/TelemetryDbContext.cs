@@ -27,6 +27,8 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
             entity.Property(item => item.Fingerprint).HasMaxLength(128);
             entity.HasIndex(item => item.TimestampUtc);
             entity.HasIndex(item => new { item.Kind, item.TimestampUtc });
+            entity.HasIndex(item => new { item.Kind, item.Name, item.TimestampUtc });
+            entity.HasIndex(item => new { item.Kind, item.Name, item.ServiceName, item.TimestampUtc });
             entity.HasIndex(item => new { item.ServiceName, item.TimestampUtc });
             entity.HasIndex(item => item.TraceId);
             entity.HasIndex(item => item.Fingerprint).IsUnique().HasFilter("Fingerprint IS NOT NULL");
