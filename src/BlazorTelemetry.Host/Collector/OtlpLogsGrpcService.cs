@@ -22,9 +22,14 @@ internal sealed class OtlpLogsGrpcService(
         }
 
         var items = parser.ParseLogs(request, authorization.ApplicationName);
-        if (!await coordinator.Enqueue(items, mediator, context.CancellationToken))
+        var result = await coordinator.Enqueue(items, mediator, context.CancellationToken);
+        if (!result.Accepted)
         {
             throw new RpcException(new Status(StatusCode.ResourceExhausted, "The ingestion queue is full."));
+        }
+        if (!result.Persisted)
+        {
+            throw new RpcException(new Status(StatusCode.Unavailable, "The telemetry batch could not be persisted."));
         }
 
         return new ExportLogsServiceResponse();

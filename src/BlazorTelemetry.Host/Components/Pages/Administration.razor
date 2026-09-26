@@ -9,10 +9,17 @@
 @code {
     private IReadOnlyList<IngestionApplication> _applications = [];
     private string? _error;
+    private int? _selectedApplicationId;
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadApplications();
+    }
+
+    private async Task LoadApplications()
+    {
         var result = await Repository.Send(new GetIngestionApplicationsRequest(), CancellationToken.None);
+        _error = null;
         if (result.HasError)
         {
             _error = string.Join(" ", result.BrokenRules.Select(rule => rule.Message));
@@ -20,16 +27,23 @@
         }
         _applications = result.Data ?? [];
     }
+
+    private void SelectApplication(int id)
+    {
+        _selectedApplicationId = id;
+    }
 }
 
-<PageTitle>API keys · BlazorTelemetry</PageTitle>
+<PageTitle>Administration · BlazorTelemetry</PageTitle>
 <main class="admin-page">
     <header>
         <a href="/">← Dashboard</a>
-        <h1>API keys</h1>
-        <p>Manage ingestion and MCP read access.</p>
-        <a class="btn btn-primary" href="/administration/keys/new">Create API key</a>
-        <a class="btn btn-outline-light ms-2" href="/administration/options">Telemetry options</a>
+        <h1>Administration</h1>
+        <p>Manage ingestion, MCP read access, and telemetry options.</p>
+        <nav class="admin-navigation" aria-label="Administration sections">
+            <a class="btn btn-outline-light" href="#api-keys">API keys</a>
+            <a class="btn btn-outline-light" href="#telemetry-options">Telemetry options</a>
+        </nav>
     </header>
 
     @if (!Options.RequireIngestionKey)
@@ -39,8 +53,9 @@
         </div>
     }
 
-    <section>
+    <section id="api-keys">
         <h2>API keys</h2>
+        <ApiKeyCreate OnCreated="LoadApplications" />
         @if (_error is not null)
         {
             <div class="alert alert-danger" role="alert">@_error</div>
@@ -57,9 +72,20 @@
                     <span role="cell">Expires: @(application.ExpiresUtc?.ToLocalTime().ToString("g") ?? "Never")</span>
                     <span role="cell">Last used: @(application.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</span>
                     <span role="cell">Uses: @application.UsageCount</span>
-                    <a href="/administration/keys/@application.Id">Manage</a>
+                    <button type="button" @onclick="() => SelectApplication(application.Id)">Manage</button>
                 </div>
+                @if (_selectedApplicationId == application.Id)
+                {
+                    <div class="selected-key">
+                        <button type="button" class="btn btn-outline-light" @onclick="() => _selectedApplicationId = null">Close key details</button>
+                        <ApiKeyDetail @key="application.Id" Id="application.Id" OnChanged="LoadApplications" />
+                    </div>
+                }
             }
         </div>
     </section>
+
+    <div id="telemetry-options">
+        <AdministrationOptions />
+    </div>
 </main>

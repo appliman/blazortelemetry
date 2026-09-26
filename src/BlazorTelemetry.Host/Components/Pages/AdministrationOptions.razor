@@ -1,7 +1,3 @@
-@page "/administration/options"
-@attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
-@rendermode InteractiveServer
-
 @using BlazorTelemetry.Core
 @using BlazorTelemetry.Host.Configuration
 @using Microsoft.AspNetCore.Components.Forms
@@ -95,11 +91,9 @@
     }
 }
 
-<PageTitle>Telemetry options · BlazorTelemetry</PageTitle>
-<main class="options-page">
+<div class="options-page">
     <header>
-        <a href="/administration">← Administration</a>
-        <h1>Telemetry options</h1>
+        <h2>Telemetry options</h2>
         <p>Override the server configuration. Changes take effect after an application restart.</p>
     </header>
 
@@ -190,4 +184,4 @@
             }
         </div>
     </EditForm>
-</main>
+</div>

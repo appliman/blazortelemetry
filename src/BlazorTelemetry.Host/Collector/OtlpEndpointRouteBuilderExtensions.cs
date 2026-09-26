@@ -154,7 +154,12 @@ public static class OtlpEndpointRouteBuilderExtensions
 
     private static async Task<IResult> Persist(IngestionCoordinator coordinator, IMediator mediator, IReadOnlyList<BlazorTelemetry.Core.TelemetryItem> items, IMessage response, CancellationToken cancellationToken)
     {
-        if (!await coordinator.Enqueue(items, mediator, cancellationToken))
+        var result = await coordinator.Enqueue(items, mediator, cancellationToken);
+        if (!result.Accepted)
+        {
+            return TypedResults.StatusCode(StatusCodes.Status429TooManyRequests);
+        }
+        if (!result.Persisted)
         {
             return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
