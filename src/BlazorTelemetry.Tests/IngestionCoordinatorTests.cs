@@ -20,10 +20,12 @@ public sealed class IngestionCoordinatorTests
         var first = coordinator.Enqueue([new TelemetryItem()], services.GetRequiredService<IMediator>(), CancellationToken.None);
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.False(await coordinator.Enqueue([new TelemetryItem()], services.GetRequiredService<IMediator>(), CancellationToken.None));
+        var rejected = await coordinator.Enqueue([new TelemetryItem()], services.GetRequiredService<IMediator>(), CancellationToken.None);
+        Assert.False(rejected.Accepted);
+        Assert.False(rejected.Persisted);
         Assert.Equal(1, counters.QueueDepth);
         handler.Commit.SetResult(true);
-        Assert.True(await first.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal((true, true), await first.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(0, counters.QueueDepth);
         Assert.Equal(1, counters.Persisted);
         Assert.Equal(1, counters.Rejected);
@@ -39,7 +41,7 @@ public sealed class IngestionCoordinatorTests
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         handler.Commit.SetResult(false);
 
-        Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal((true, false), await pending.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(0, services.GetRequiredService<CollectorCounters>().QueueDepth);
     }
 
@@ -54,7 +56,7 @@ public sealed class IngestionCoordinatorTests
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cancellation.Cancel();
 
-        Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal((true, false), await pending.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(1, services.GetRequiredService<CollectorCounters>().QueueDepth);
         handler.Commit.SetResult(true);
         await WaitUntilEmpty(coordinator, services.GetRequiredService<CollectorCounters>());
@@ -72,7 +74,7 @@ public sealed class IngestionCoordinatorTests
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         services.GetRequiredService<TestHostApplicationLifetime>().StopApplication();
 
-        Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal((true, false), await pending.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(1, counters.QueueDepth);
         handler.Commit.SetResult(false);
         await WaitUntilEmpty(coordinator, counters);
@@ -89,7 +91,7 @@ public sealed class IngestionCoordinatorTests
         gate.PauseBeforeStart = true;
         var pending = coordinator.Enqueue([new TelemetryItem()], services.GetRequiredService<IMediator>(), CancellationToken.None);
 
-        Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.Equal((true, false), await pending.WaitAsync(TimeSpan.FromSeconds(3)));
         Assert.Equal(0, counters.QueueDepth);
         Assert.Equal(1, counters.Rejected);
         gate.AllowStart.SetResult(true);

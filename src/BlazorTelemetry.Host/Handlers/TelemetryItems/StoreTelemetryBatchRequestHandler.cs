@@ -15,11 +15,22 @@ internal sealed class StoreTelemetryBatchRequestHandler(
     IDbContextFactory<TelemetryDbContext> contextFactory,
     ILogger<StoreTelemetryBatchRequestHandler> logger) : IRequestHandler<StoreTelemetryBatchRequest, CommandResult>
 {
+    private static readonly SemaphoreSlim _writeGate = new(1, 1);
+
     public async Task<CommandResult> Handle(StoreTelemetryBatchRequest request, CancellationToken cancellationToken)
     {
         try
         {
-            var changed = await Store(request.Items, cancellationToken);
+            await _writeGate.WaitAsync(cancellationToken);
+            int changed;
+            try
+            {
+                changed = await Store(request.Items, cancellationToken);
+            }
+            finally
+            {
+                _writeGate.Release();
+            }
             return new CommandResult { ChangeCount = changed };
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
