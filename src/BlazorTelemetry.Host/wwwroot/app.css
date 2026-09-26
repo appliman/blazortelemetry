@@ -14,3 +14,8 @@ a { color: #76e4b8; }
 .auth-card p { color: #aebdc6; }
 .auth-label { color: #76e4b8; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .auth-help { margin: 1.5rem 0 0; }
+.key-page { max-width: 50rem; color: #e8edf5; }
+.key-page .form-control { background: #111820; border-color: #354453; color: #e8edf5; }
+.key-page .form-control:focus { background: #111820; color: #e8edf5; }
+.key-page .form-floating > label { color: #9aabb6; }
+.key-page .key-secret { display: block; overflow-wrap: anywhere; user-select: all; }

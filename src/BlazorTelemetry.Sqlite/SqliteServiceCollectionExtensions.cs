@@ -12,9 +12,11 @@ public static class SqliteServiceCollectionExtensions
         int poolSize = 16)
     {
         services.AddPooledDbContextFactory<TelemetryDbContext>(
-            options => options.UseSqlite(connectionString),
+            options => options
+                .UseSqlite(connectionString,
+                    sqliteOptions => sqliteOptions.UseParameterizedCollectionMode(ParameterTranslationMode.MultipleParameters))
+                .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking),
             poolSize);
-        services.AddScoped<ITelemetryRepository, TelemetryRepository>();
         return services;
     }
 }

@@ -1,4 +1,9 @@
 using BlazorTelemetry.Sqlite;
+using BlazorTelemetry.Host.DataProtection;
+using BlazorTelemetry.AspNetCore;
+using BlazorTelemetry.Core;
+using ChannelMediator;
+using ChannelMediator.InMemory;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.EntityFrameworkCore;
@@ -53,6 +58,9 @@ public sealed class DataProtectionKeyRepositoryTests
         var services = new ServiceCollection();
         services.AddDbContextFactory<TelemetryDbContext>(options =>
             options.UseSqlite($"Data Source={databasePath};Pooling=False"));
+        services.AddLogging();
+        services.AddSingleton(new BlazorTelemetryOptions());
+        services.AddChannelMediator(configuration => configuration.UseChannelMediatorInMemory(), typeof(BlazorTelemetryServiceCollectionExtensions).Assembly);
         services.AddSingleton<DataProtectionKeyRepository>();
         services.AddDataProtection().SetApplicationName("BlazorTelemetry.Host");
         services.AddOptions<KeyManagementOptions>()

@@ -4,11 +4,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.2.11.0</Version>
+    <Version>2.4.15.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\BlazorTelemetry.Core\BlazorTelemetry.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

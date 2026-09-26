@@ -1,6 +1,7 @@
 @page "/"
 @rendermode InteractiveServer
 @inject DemoTelemetryService Telemetry
+@inject IConfiguration Configuration
 
 @code {
     private string? _result;
@@ -17,7 +18,7 @@
 <PageTitle>BlazorTelemetry demo</PageTitle>
 <main class="demo-page">
     <h1>BlazorTelemetry demo</h1>
-    <p>Generate real OpenTelemetry logs, distributed traces, and metrics, then inspect them in the embedded dashboard.</p>
+    <p>Generate real OpenTelemetry logs, distributed traces, and metrics, then inspect them in the Host dashboard.</p>
     <div class="demo-actions">
         <button disabled="@_running" @onclick='() => Run("success")'>Successful order</button>
         <button disabled="@_running" @onclick='() => Run("slow")'>Slow order</button>
@@ -25,5 +26,5 @@
         <button class="danger" disabled="@_running" @onclick='() => Run("failure")'>Controlled error</button>
     </div>
     @if (_result is not null) { <p class="demo-result" role="status">@_result</p> }
-    <a class="demo-link" href="telemetry">Open embedded dashboard</a>
+    <a class="demo-link" href="@Configuration["DashboardUrl"]">Open Host dashboard</a>
 </main>
