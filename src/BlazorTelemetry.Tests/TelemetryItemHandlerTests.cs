@@ -122,6 +122,26 @@ public sealed partial class TelemetryCqrsTests
     }
 
     [Fact]
+    public async Task ConcurrentBatchesArePersistedWithoutSqliteWriteContention()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var results = await Task.WhenAll(Enumerable.Range(0, 24).Select(index =>
+            _mediator.Send(new StoreTelemetryBatchRequest(
+                Enumerable.Range(0, 5).Select(item => new TelemetryItem
+                {
+                    Kind = TelemetryKind.Log,
+                    TimestampUtc = timestamp,
+                    ObservedUtc = timestamp,
+                    ServiceName = "concurrent-api",
+                    Name = $"batch-{index}-item-{item}"
+                }).ToArray()), CancellationToken.None)));
+
+        Assert.All(results, result => Assert.False(result.HasError));
+        var page = await _mediator.Query(new TelemetryQuery(TelemetryKind.Log, "concurrent-api", Take: 150), CancellationToken.None);
+        Assert.Equal(120, page.Total);
+    }
+
+    [Fact]
     public async Task QueryFiltersLogsByOtlpSeverityRangeBeforePagination()
     {
         var repository = _mediator;

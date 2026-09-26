@@ -23,12 +23,12 @@ internal sealed class IngestionCoordinator : IDisposable
         _stoppingRegistration = lifetime.ApplicationStopping.Register(Stop);
     }
 
-    public async Task<bool> Enqueue(IReadOnlyList<TelemetryItem> items, IMediator mediator, CancellationToken cancellationToken)
+    public async Task<(bool Accepted, bool Persisted)> Enqueue(IReadOnlyList<TelemetryItem> items, IMediator mediator, CancellationToken cancellationToken)
     {
         if (_lifetime.ApplicationStopping.IsCancellationRequested || !_slots.Wait(0))
         {
             _counters.AddRejected(items.Count);
-            return false;
+            return (false, false);
         }
 
         var batchId = Guid.NewGuid();
@@ -39,12 +39,12 @@ internal sealed class IngestionCoordinator : IDisposable
         try
         {
             await mediator.EnqueueRequest(new PersistTelemetryBatchRequest(batchId), _lifetime.ApplicationStopping);
-            return await batch.Completion.Task.WaitAsync(_timeout, cancellationToken);
+            return (true, await batch.Completion.Task.WaitAsync(_timeout, cancellationToken));
         }
         catch (Exception exception) when (exception is TimeoutException or OperationCanceledException)
         {
             Abandon(batchId, batch);
-            return false;
+            return (true, false);
         }
         catch
         {
