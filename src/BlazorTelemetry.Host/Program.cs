@@ -3,6 +3,8 @@ using BlazorTelemetry.Host.Components;
 using Blazor2fa;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using BlazorTelemetry.Sqlite;
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -71,14 +73,10 @@ builder.Services.AddAuthorizationBuilder()
 builder.Services.AddBlazorTelemetry(builder.Configuration);
 builder.Services.AddHealthChecks();
 
-var keysPath = builder.Configuration["DataProtection:KeysPath"];
-if (!string.IsNullOrWhiteSpace(keysPath))
-{
-    Directory.CreateDirectory(keysPath);
-    builder.Services.AddDataProtection()
-        .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
-        .SetApplicationName("BlazorTelemetry.Host");
-}
+builder.Services.AddSingleton<DataProtectionKeyRepository>();
+builder.Services.AddDataProtection().SetApplicationName("BlazorTelemetry.Host");
+builder.Services.AddOptions<KeyManagementOptions>()
+    .Configure<DataProtectionKeyRepository>((options, repository) => options.XmlRepository = repository);
 
 var app = builder.Build();
 app.Logger.LogInformation(

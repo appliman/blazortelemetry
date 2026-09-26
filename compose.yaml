@@ -1,0 +1,80 @@
+services:
+  blazor-telemetry:
+    image: ${BLAZOR_TELEMETRY_IMAGE:-ghcr.io/appliman/blazor-telemetry:latest}
+    container_name: telemetry-staging-${APPLICATION_NAME:?Set APPLICATION_NAME to a unique lowercase name}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pull_policy: always
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      DOTNET_RUNNING_IN_CONTAINER: "true"
+      TZ: Europe/Paris
+
+      # Kestrel endpoints
+      Kestrel__Endpoints__Web__Url: http://0.0.0.0:8080
+      Kestrel__Endpoints__Web__Protocols: Http1
+      Kestrel__Endpoints__OtlpGrpc__Url: http://0.0.0.0:4317
+      Kestrel__Endpoints__OtlpGrpc__Protocols: Http2
+
+      # Authentication
+      Blazor2fa__AllowedUserLogins__0: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
+      Blazor2fa__SecretKey: ${BLAZOR2FA_SECRET_KEY:?Set BLAZOR2FA_SECRET_KEY}
+      Blazor2fa__Issuer: ${BLAZOR2FA_ISSUER:-BlazorTelemetry}
+      Blazor2fa__ApplicationName: ${BLAZOR2FA_APPLICATION_NAME:-Staging Administrator}
+
+      # OTLP ingestion
+      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-false}
+
+    expose:
+      - "8080"
+      - "4317"
+
+    volumes:
+      - ${DATA_PATH:?Set DATA_PATH to a dedicated absolute path}:/data
+
+    networks:
+      - traefik
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+
+      # HTTP to HTTPS redirect
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-http.rule=Host(`${DOMAIN:?Set DOMAIN without protocol or path}`)"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-http.entrypoints=web"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-http.middlewares=telemetry-${APPLICATION_NAME}-redirect@docker"
+
+      - "traefik.http.middlewares.telemetry-${APPLICATION_NAME}-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.telemetry-${APPLICATION_NAME}-redirect.redirectscheme.permanent=true"
+
+      # Blazor web interface and OTLP HTTP/protobuf
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}.entrypoints=websecure"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}.tls=true"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}.service=telemetry-${APPLICATION_NAME}"
+
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}.loadbalancer.server.port=8080"
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}.loadbalancer.passhostheader=true"
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}.loadbalancer.healthcheck.path=/health/live"
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}.loadbalancer.healthcheck.interval=30s"
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}.loadbalancer.healthcheck.timeout=5s"
+
+      # OTLP gRPC
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-grpc.rule=Host(`${DOMAIN}`) && PathPrefix(`/opentelemetry.proto.collector.`)"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-grpc.entrypoints=websecure"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-grpc.tls=true"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-grpc.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-grpc.priority=100"
+      - "traefik.http.routers.telemetry-${APPLICATION_NAME}-grpc.service=telemetry-${APPLICATION_NAME}-grpc"
+
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}-grpc.loadbalancer.server.port=4317"
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}-grpc.loadbalancer.server.scheme=h2c"
+      - "traefik.http.services.telemetry-${APPLICATION_NAME}-grpc.loadbalancer.passhostheader=true"
+
+networks:
+  traefik:
+    external: true
+    name: traefik-public

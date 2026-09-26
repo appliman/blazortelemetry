@@ -5,8 +5,7 @@ EXPOSE 8080
 EXPOSE 4317
 ENV DOTNET_EnableDiagnostics=0 \
     TZ=Europe/Paris \
-    BlazorTelemetry__ConnectionString="Data Source=/data/telemetry.db;Cache=Shared" \
-    DataProtection__KeysPath=/data/keys
+    BlazorTelemetry__ConnectionString="Data Source=/data/telemetry.db;Cache=Shared"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
