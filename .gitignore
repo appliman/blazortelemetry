@@ -414,6 +414,8 @@ MigrationBackup/
 **/Data/*.db
 **/Data/*.db-*
 **/Data/keys/
+**/Data/blazor-telemetry-options.json
+**/Data/blazor-telemetry-options.json.*.tmp
 .impeccable/
 .playwright-cli/
 

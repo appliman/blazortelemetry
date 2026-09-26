@@ -3,7 +3,7 @@ using BlazorTelemetry.Client;
 using OpenTelemetry.Exporter;
 
 var builder = WebApplication.CreateBuilder(args);
-var endpoint = new Uri(builder.Configuration["OtlpEndpoint"] ?? "http://localhost:5279");
+var endpoint = new Uri(builder.Configuration["OtlpEndpoint"] ?? "http://localhost:8080");
 var headers = builder.Configuration["OtlpHeaders"];
 builder.Services.AddBlazorTelemetry(options =>
 {

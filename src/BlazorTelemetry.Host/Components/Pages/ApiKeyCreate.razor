@@ -1,0 +1,84 @@
+@page "/administration/keys/new"
+@attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
+@rendermode InteractiveServer
+@using BlazorTelemetry.Core
+@using BlazorTelemetry.Host.Contracts.Models.IngestionApplications
+@inject IMediator Repository
+
+@code {
+    private readonly IngestionApplication _application = new();
+    private DateTime? _expirationDate;
+    private bool _isMcpReadKey;
+    private string? _revealedKey;
+    private string? _error;
+
+    private async Task Create()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_application.Name) || _application.Name.Trim().Length > 100)
+        {
+            _error = "Enter an application name of 1 to 100 characters.";
+            return;
+        }
+
+        var expiration = _expirationDate.HasValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(_expirationDate.Value.Date, DateTimeKind.Utc))
+            : (DateTimeOffset?)null;
+        if (expiration.HasValue && expiration <= DateTimeOffset.UtcNow)
+        {
+            _error = "The expiration date must be in the future.";
+            return;
+        }
+
+        var generated = IngestionKeyGenerator.Generate();
+        _application.Name = _application.Name.Trim();
+        _application.KeyHash = generated.Hash;
+        _application.KeyPrefix = generated.Prefix;
+        _application.IsMcpReadKey = _isMcpReadKey;
+        _application.ExpiresUtc = expiration;
+        var result = await Repository.Send(new SaveIngestionApplicationRequest(_application), CancellationToken.None);
+        if (result.HasError)
+        {
+            _error = string.Join(" ", result.BrokenRules.Select(rule => rule.Message));
+            return;
+        }
+        _revealedKey = generated.PlainText;
+    }
+}
+
+<PageTitle>Create API key · BlazorTelemetry</PageTitle>
+<main class="key-page container py-5">
+    <a href="/administration">← API keys</a>
+    <h1 class="mt-3">Create API key</h1>
+    @if (_revealedKey is null)
+    {
+        <EditForm Model="_application" OnValidSubmit="Create" class="mt-4">
+            @if (_error is not null)
+            {
+                <div class="alert alert-danger" role="alert">@_error</div>
+            }
+            <div class="form-floating mb-3">
+                <InputText id="key-name" class="form-control" placeholder="Application name" @bind-Value="_application.Name" />
+                <label for="key-name">Application name</label>
+            </div>
+            <div class="form-floating mb-3">
+                <InputDate id="key-expiration" class="form-control" placeholder="Expiration date" @bind-Value="_expirationDate" />
+                <label for="key-expiration">Expiration date (optional, UTC)</label>
+            </div>
+            <div class="form-check mb-3">
+                <InputCheckbox id="mcp-read-key" class="form-check-input" @bind-Value="_isMcpReadKey" />
+                <label class="form-check-label" for="mcp-read-key">MCP read access (logs, traces, and metrics)</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Create and reveal key</button>
+        </EditForm>
+    }
+    else
+    {
+        <div class="alert alert-info mt-4" role="status">
+            <h2>Copy this key now</h2>
+            <p>The full key is shown only once.</p>
+            <code class="key-secret">@_revealedKey</code>
+        </div>
+        <a class="btn btn-primary" href="/administration">Done</a>
+    }
+</main>
