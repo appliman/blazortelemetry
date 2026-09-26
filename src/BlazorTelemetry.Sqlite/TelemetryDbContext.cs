@@ -1,10 +1,12 @@
 using BlazorTelemetry.Core;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace BlazorTelemetry.Sqlite;
 
-public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> options) : DbContext(options)
+public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> options) : DbContext(options), IDataProtectionKeyContext
 {
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
     public DbSet<TelemetryItem> TelemetryItems => Set<TelemetryItem>();
     public DbSet<IngestionApplication> IngestionApplications => Set<IngestionApplication>();
     public DbSet<AlertRule> AlertRules => Set<AlertRule>();
@@ -14,6 +16,12 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<DataProtectionKey>(entity =>
+        {
+            entity.ToTable("DataProtectionKeys");
+            entity.HasKey(key => key.Id);
+        });
+
         modelBuilder.Entity<TelemetryItem>(entity =>
         {
             entity.ToTable("TelemetryItems");
