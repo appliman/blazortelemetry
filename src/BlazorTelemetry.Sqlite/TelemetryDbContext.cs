@@ -37,6 +37,7 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
             entity.HasIndex(item => new { item.Kind, item.TimestampUtc });
             entity.HasIndex(item => new { item.Kind, item.Name, item.TimestampUtc });
             entity.HasIndex(item => new { item.Kind, item.Name, item.ServiceName, item.TimestampUtc });
+            entity.HasIndex(item => new { item.Kind, item.ServiceName, item.TimestampUtc });
             entity.HasIndex(item => new { item.ServiceName, item.TimestampUtc });
             entity.HasIndex(item => item.TraceId);
             entity.HasIndex(item => item.Fingerprint).IsUnique().HasFilter("Fingerprint IS NOT NULL");
@@ -46,11 +47,15 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
         {
             entity.HasKey(application => application.Id);
             entity.HasIndex(application => application.KeyHash).IsUnique();
+            entity.HasIndex(application => application.Name);
             entity.Property(application => application.CreatedUtc).HasConversion<long>();
+            entity.Property(application => application.ExpiresUtc).HasConversion<long?>();
+            entity.Property(application => application.RevokedUtc).HasConversion<long?>();
             entity.Property(application => application.LastSeenUtc).HasConversion<long?>();
         });
 
         modelBuilder.Entity<AlertRule>().HasKey(rule => rule.Id);
+        modelBuilder.Entity<AlertRule>().HasIndex(rule => rule.Name);
         modelBuilder.Entity<AlertRule>().Property(rule => rule.SilencedUntilUtc).HasConversion<long?>();
 
         modelBuilder.Entity<Incident>(entity =>
@@ -61,12 +66,14 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
             entity.Property(incident => incident.ResolvedUtc).HasConversion<long?>();
             entity.Property(incident => incident.AcknowledgedUtc).HasConversion<long?>();
             entity.HasIndex(incident => new { incident.AlertRuleId, incident.State });
+            entity.HasIndex(incident => incident.StartedUtc);
         });
 
         modelBuilder.Entity<DashboardDefinition>(entity =>
         {
             entity.HasKey(dashboard => dashboard.Id);
             entity.Property(dashboard => dashboard.UpdatedUtc).HasConversion<long>();
+            entity.HasIndex(dashboard => dashboard.Name);
         });
 
         modelBuilder.Entity<NotificationDelivery>(entity =>
@@ -75,6 +82,7 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
             entity.Property(delivery => delivery.NextAttemptUtc).HasConversion<long>();
             entity.Property(delivery => delivery.SentUtc).HasConversion<long?>();
             entity.HasIndex(delivery => delivery.EventKey).IsUnique();
+            entity.HasIndex(delivery => new { delivery.Status, delivery.NextAttemptUtc });
         });
     }
 }

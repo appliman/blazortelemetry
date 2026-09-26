@@ -1,0 +1,193 @@
+@page "/administration/options"
+@attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
+@rendermode InteractiveServer
+
+@using BlazorTelemetry.Core
+@using BlazorTelemetry.Host.Configuration
+@using Microsoft.AspNetCore.Components.Forms
+@inject BlazorTelemetryOptions Options
+@inject TelemetryOptionsOverrideStore OverrideStore
+@inject ILogger<AdministrationOptions> Logger
+
+@code {
+    private TelemetryOptionsOverrides _form = new();
+    private string _patterns = string.Empty;
+    private string _recipients = string.Empty;
+    private string? _webhookToken;
+    private string? _smtpPassword;
+    private string? _ntfyToken;
+    private bool _clearWebhookToken;
+    private bool _clearSmtpPassword;
+    private bool _clearNtfyToken;
+    private bool _hasOverrides;
+    private bool _saving;
+    private string? _message;
+    private IReadOnlyList<string> _errors = [];
+
+    protected override void OnInitialized()
+    {
+        _form = OverrideStore.GetForEditing() ?? TelemetryOptionsOverrides.From(Options);
+        _patterns = string.Join(Environment.NewLine, _form.SensitiveAttributePatterns);
+        _recipients = string.Join(Environment.NewLine, _form.Smtp.Recipients);
+        _hasOverrides = OverrideStore.HasOverrides;
+    }
+
+    private async Task Save(EditContext _)
+    {
+        _errors = [];
+        _message = null;
+        _form.SensitiveAttributePatterns = ParseLines(_patterns);
+        _form.Smtp.Recipients = ParseLines(_recipients);
+        _errors = TelemetryOptionsOverrideStore.Validate(_form);
+        if (_errors.Count > 0)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await OverrideStore.Save(_form, _webhookToken, _clearWebhookToken, _smtpPassword,
+                _clearSmtpPassword, _ntfyToken, _clearNtfyToken, CancellationToken.None);
+            _webhookToken = null;
+            _smtpPassword = null;
+            _ntfyToken = null;
+            _clearWebhookToken = false;
+            _clearSmtpPassword = false;
+            _clearNtfyToken = false;
+            _hasOverrides = true;
+            _message = "Overrides saved. Restart BlazorTelemetry to apply them.";
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to save telemetry option overrides.");
+            _errors = ["The options could not be saved. Check the server logs."];
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void Reset()
+    {
+        try
+        {
+            OverrideStore.Reset();
+            _form = TelemetryOptionsOverrides.From(Options);
+            _patterns = string.Join(Environment.NewLine, _form.SensitiveAttributePatterns);
+            _recipients = string.Join(Environment.NewLine, _form.Smtp.Recipients);
+            _hasOverrides = false;
+            _errors = [];
+            _message = "Overrides removed. Restart BlazorTelemetry to use the server configuration.";
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError(exception, "Unable to remove telemetry option overrides.");
+            _errors = ["The overrides could not be removed. Check the server logs."];
+        }
+    }
+
+    private static string[] ParseLines(string value)
+    {
+        return value.Split(['\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+}
+
+<PageTitle>Telemetry options · BlazorTelemetry</PageTitle>
+<main class="options-page">
+    <header>
+        <a href="/administration">← Administration</a>
+        <h1>Telemetry options</h1>
+        <p>Override the server configuration. Changes take effect after an application restart.</p>
+    </header>
+
+    @if (_message is not null)
+    {
+        <div class="alert alert-success" role="status">@_message</div>
+    }
+    @if (_errors.Count > 0)
+    {
+        <div class="alert alert-danger" role="alert">
+            @foreach (var error in _errors)
+            {
+                <p class="mb-1">@error</p>
+            }
+        </div>
+    }
+
+    <EditForm Model="_form" OnValidSubmit="Save" FormName="telemetry-options">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+        <section>
+            <h2>Retention and storage</h2>
+            <div class="options-grid">
+                <div><div class="form-floating"><InputNumber id="raw-retention" class="form-control" @bind-Value="_form.RawRetentionDays" placeholder="Raw retention" /><label for="raw-retention">Raw retention (days)</label></div><div class="form-text">Days to keep logs, traces, and requests.</div></div>
+                <div><div class="form-floating"><InputNumber id="metric-retention" class="form-control" @bind-Value="_form.MetricRetentionDays" placeholder="Metric retention" /><label for="metric-retention">Metric retention (days)</label></div><div class="form-text">Days to keep metric samples.</div></div>
+                <div><div class="form-floating"><InputNumber id="database-bytes" class="form-control" @bind-Value="_form.MaximumDatabaseBytes" placeholder="Database budget" /><label for="database-bytes">Maximum database size (bytes)</label></div><div class="form-text">Storage budget used by automatic cleanup.</div></div>
+                <div><div class="form-floating"><InputNumber id="db-pool" class="form-control" @bind-Value="_form.DbContextPoolSize" placeholder="Context pool" /><label for="db-pool">SQLite context pool size</label></div><div class="form-text">Maximum pooled Entity Framework contexts. Applied at startup.</div></div>
+            </div>
+        </section>
+
+        <section>
+            <h2>Ingestion and limits</h2>
+            <div class="options-grid">
+                <div><div class="form-floating"><InputNumber id="queue-capacity" class="form-control" @bind-Value="_form.QueueCapacity" placeholder="Queue capacity" /><label for="queue-capacity">Queue capacity</label></div><div class="form-text">Maximum batches waiting for persistence. Applied at startup.</div></div>
+                <div><div class="form-floating"><InputNumber id="ack-timeout" class="form-control" @bind-Value="_form.IngestionAcknowledgementTimeoutSeconds" placeholder="Acknowledgement timeout" /><label for="ack-timeout">Acknowledgement timeout (seconds)</label></div><div class="form-text">How long an exporter waits for a batch to be saved.</div></div>
+                <div><div class="form-floating"><InputNumber id="request-bytes" class="form-control" @bind-Value="_form.MaximumRequestBytes" placeholder="Request limit" /><label for="request-bytes">Maximum request size (bytes)</label></div><div class="form-text">Largest accepted OTLP payload; the gRPC limit is applied at startup.</div></div>
+                <div><div class="form-floating"><InputNumber id="max-attributes" class="form-control" @bind-Value="_form.MaximumAttributes" placeholder="Attributes" /><label for="max-attributes">Maximum attributes</label></div><div class="form-text">Maximum attributes processed per telemetry item.</div></div>
+                <div class="form-check form-switch"><InputCheckbox id="require-key" class="form-check-input" @bind-Value="_form.RequireIngestionKey" /><label class="form-check-label" for="require-key">Require an ingestion API key</label><div class="form-text">Reject OTLP submissions without a valid ingestion key after restart.</div></div>
+                <div><div class="form-floating"><InputTextArea id="sensitive-patterns" class="form-control" @bind-Value="_patterns" placeholder="Sensitive attribute patterns" /><label for="sensitive-patterns">Sensitive attribute patterns</label></div><div class="form-text">One attribute name fragment per line to mask before storage.</div></div>
+            </div>
+        </section>
+
+        <section>
+            <h2>Queries and refresh</h2>
+            <div class="options-grid">
+                <div><div class="form-floating"><InputNumber id="query-rows" class="form-control" @bind-Value="_form.MaximumQueryRows" placeholder="Query rows" /><label for="query-rows">Maximum query rows</label></div><div class="form-text">Maximum rows returned by a telemetry query.</div></div>
+                <div><div class="form-floating"><InputNumber id="dashboard-rows" class="form-control" @bind-Value="_form.MaximumDashboardMetricRows" placeholder="Dashboard rows" /><label for="dashboard-rows">Maximum dashboard metric rows</label></div><div class="form-text">Limits metric samples loaded for a dashboard calculation.</div></div>
+                <div><div class="form-floating"><InputNumber id="refresh-interval" class="form-control" @bind-Value="_form.DashboardRefreshIntervalSeconds" placeholder="Refresh interval" /><label for="refresh-interval">Dashboard refresh (seconds)</label></div><div class="form-text">How often a live dashboard reads new data.</div></div>
+                <div><div class="form-floating"><InputNumber id="evaluation-interval" class="form-control" @bind-Value="_form.EvaluationIntervalSeconds" placeholder="Evaluation interval" /><label for="evaluation-interval">Alert evaluation (seconds)</label></div><div class="form-text">How often alert rules are evaluated. Applied at startup.</div></div>
+            </div>
+        </section>
+
+        <section>
+            <h2>Webhook notifications</h2>
+            <div class="options-grid">
+                <div><div class="form-floating"><InputText id="webhook-url" class="form-control" @bind-Value="_form.Webhook.Url" placeholder="Webhook URL" /><label for="webhook-url">Webhook URL</label></div><div class="form-text">HTTPS or HTTP endpoint that receives alert payloads; blank disables this channel.</div></div>
+                <div><div class="form-floating"><InputText id="webhook-token" type="password" class="form-control" @bind-Value="_webhookToken" placeholder="Bearer token" autocomplete="new-password" /><label for="webhook-token">Bearer token</label></div><div class="form-text">Optional Authorization token. Leave blank to keep the current value.</div><div class="form-check"><InputCheckbox id="clear-webhook-token" class="form-check-input" @bind-Value="_clearWebhookToken" /><label class="form-check-label" for="clear-webhook-token">Clear current token</label></div></div>
+            </div>
+        </section>
+
+        <section>
+            <h2>Email notifications</h2>
+            <div class="options-grid">
+                <div><div class="form-floating"><InputText id="smtp-host" class="form-control" @bind-Value="_form.Smtp.Host" placeholder="SMTP host" /><label for="smtp-host">SMTP host</label></div><div class="form-text">Mail server hostname; blank disables email delivery.</div></div>
+                <div><div class="form-floating"><InputNumber id="smtp-port" class="form-control" @bind-Value="_form.Smtp.Port" placeholder="SMTP port" /><label for="smtp-port">SMTP port</label></div><div class="form-text">TCP port used by the mail server.</div></div>
+                <div class="form-check form-switch"><InputCheckbox id="smtp-tls" class="form-check-input" @bind-Value="_form.Smtp.UseTls" /><label class="form-check-label" for="smtp-tls">Use TLS</label><div class="form-text">Encrypt the SMTP connection.</div></div>
+                <div><div class="form-floating"><InputText id="smtp-user" class="form-control" @bind-Value="_form.Smtp.UserName" placeholder="SMTP user" /><label for="smtp-user">SMTP username</label></div><div class="form-text">Optional account name for server authentication.</div></div>
+                <div><div class="form-floating"><InputText id="smtp-password" type="password" class="form-control" @bind-Value="_smtpPassword" placeholder="SMTP password" autocomplete="new-password" /><label for="smtp-password">SMTP password</label></div><div class="form-text">Leave blank to keep the current password.</div><div class="form-check"><InputCheckbox id="clear-smtp-password" class="form-check-input" @bind-Value="_clearSmtpPassword" /><label class="form-check-label" for="clear-smtp-password">Clear current password</label></div></div>
+                <div><div class="form-floating"><InputText id="smtp-from" class="form-control" @bind-Value="_form.Smtp.From" placeholder="Sender address" /><label for="smtp-from">Sender address</label></div><div class="form-text">From address on alert emails.</div></div>
+                <div><div class="form-floating"><InputTextArea id="smtp-recipients" class="form-control" @bind-Value="_recipients" placeholder="Recipients" /><label for="smtp-recipients">Recipients</label></div><div class="form-text">One alert recipient email address per line.</div></div>
+            </div>
+        </section>
+
+        <section>
+            <h2>ntfy notifications</h2>
+            <div class="options-grid">
+                <div><div class="form-floating"><InputText id="ntfy-url" class="form-control" @bind-Value="_form.Ntfy.ServerUrl" placeholder="ntfy server" /><label for="ntfy-url">ntfy server URL</label></div><div class="form-text">Base URL of the ntfy server.</div></div>
+                <div><div class="form-floating"><InputText id="ntfy-topic" class="form-control" @bind-Value="_form.Ntfy.Topic" placeholder="ntfy topic" /><label for="ntfy-topic">ntfy topic</label></div><div class="form-text">Topic that receives alert messages; blank disables this channel.</div></div>
+                <div><div class="form-floating"><InputText id="ntfy-token" type="password" class="form-control" @bind-Value="_ntfyToken" placeholder="Access token" autocomplete="new-password" /><label for="ntfy-token">ntfy access token</label></div><div class="form-text">Optional server token. Leave blank to keep the current value.</div><div class="form-check"><InputCheckbox id="clear-ntfy-token" class="form-check-input" @bind-Value="_clearNtfyToken" /><label class="form-check-label" for="clear-ntfy-token">Clear current token</label></div></div>
+            </div>
+        </section>
+
+        <div class="options-actions">
+            <button type="submit" class="btn btn-primary" disabled="@_saving">Save overrides</button>
+            @if (_hasOverrides)
+            {
+                <button type="button" class="btn btn-outline-light" @onclick="Reset">Remove overrides</button>
+            }
+        </div>
+    </EditForm>
+</main>

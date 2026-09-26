@@ -1,0 +1,104 @@
+@page "/administration/keys/{Id:int}"
+@attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
+@rendermode InteractiveServer
+@using BlazorTelemetry.Core
+@using BlazorTelemetry.Host.Contracts.Models.IngestionApplications
+@inject IMediator Repository
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private IngestionApplication? _application;
+    private string? _revealedKey;
+    private string? _message;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var result = await Repository.Send(new GetIngestionApplicationRequest(Id), CancellationToken.None);
+        _error = result.HasError ? string.Join(" ", result.BrokenRules.Select(rule => rule.Message)) : null;
+        _application = result.Data;
+    }
+
+    private async Task Rotate()
+    {
+        var generated = IngestionKeyGenerator.Generate();
+        var replacement = new IngestionApplication
+        {
+            KeyHash = generated.Hash,
+            KeyPrefix = generated.Prefix
+        };
+        var result = await Repository.Send(new RotateIngestionApplicationRequest(Id, replacement), CancellationToken.None);
+        if (result.HasError)
+        {
+            _error = string.Join(" ", result.BrokenRules.Select(rule => rule.Message));
+            return;
+        }
+        if (result.ChangeCount == 0)
+        {
+            _message = "This key is no longer active.";
+            await OnParametersSetAsync();
+            return;
+        }
+
+        _revealedKey = generated.PlainText;
+        _message = "The previous key was revoked immediately. Copy the replacement now; it will not be shown again.";
+        await OnParametersSetAsync();
+    }
+
+    private async Task Revoke()
+    {
+        var result = await Repository.Send(new RevokeIngestionApplicationRequest(Id), CancellationToken.None);
+        if (result.HasError)
+        {
+            _error = string.Join(" ", result.BrokenRules.Select(rule => rule.Message));
+            return;
+        }
+        _message = result.ChangeCount > 0 ? "The key was revoked immediately." : "This key is no longer active.";
+        await OnParametersSetAsync();
+    }
+}
+
+<PageTitle>Manage API key · BlazorTelemetry</PageTitle>
+<main class="key-page container py-5">
+    <a href="/administration">← API keys</a>
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger mt-3" role="alert">@_error</div>
+    }
+    @if (_application is null)
+    {
+        <h1 class="mt-3">API key not found</h1>
+    }
+    else
+    {
+        <h1 class="mt-3">@_application.Name</h1>
+        <p>Key prefix: <code>@_application.KeyPrefix…</code></p>
+        <p>Access: @(_application.IsMcpReadKey ? "MCP read access" : "OTLP ingestion")</p>
+        <dl>
+            <dt>Status</dt><dd>@(!_application.IsActive ? "Revoked" : _application.ExpiresUtc <= DateTimeOffset.UtcNow ? "Expired" : "Active")</dd>
+            <dt>Created</dt><dd>@_application.CreatedUtc.ToLocalTime().ToString("g")</dd>
+            <dt>Expires</dt><dd>@(_application.ExpiresUtc?.ToLocalTime().ToString("g") ?? "Never")</dd>
+            <dt>Last used</dt><dd>@(_application.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</dd>
+            <dt>Uses</dt><dd>@_application.UsageCount</dd>
+        </dl>
+        @if (_message is not null)
+        {
+            <div class="alert alert-info" role="status">@_message</div>
+        }
+        @if (_revealedKey is not null)
+        {
+            <div class="alert alert-info">
+                <h2>Replacement key — shown once</h2>
+                <code class="key-secret">@_revealedKey</code>
+            </div>
+        }
+        @if (_application.IsActive)
+        {
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-primary" @onclick="Rotate">Rotate key</button>
+                <button type="button" class="btn btn-danger" @onclick="Revoke">Revoke key</button>
+            </div>
+        }
+    }
+</main>

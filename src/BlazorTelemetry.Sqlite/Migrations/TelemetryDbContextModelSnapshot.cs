@@ -66,6 +66,8 @@ namespace BlazorTelemetry.Sqlite.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Name");
+
                     b.ToTable("AlertRules");
                 });
 
@@ -87,6 +89,8 @@ namespace BlazorTelemetry.Sqlite.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("Name");
 
                     b.ToTable("Dashboards");
                 });
@@ -135,6 +139,8 @@ namespace BlazorTelemetry.Sqlite.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("StartedUtc");
+
                     b.HasIndex("AlertRuleId", "State");
 
                     b.ToTable("Incidents");
@@ -149,7 +155,13 @@ namespace BlazorTelemetry.Sqlite.Migrations
                     b.Property<long>("CreatedUtc")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long?>("ExpiresUtc")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsMcpReadKey")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("KeyHash")
@@ -167,10 +179,18 @@ namespace BlazorTelemetry.Sqlite.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("RevokedUtc")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UsageCount")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("KeyHash")
                         .IsUnique();
+
+                    b.HasIndex("Name");
 
                     b.ToTable("IngestionApplications");
                 });
@@ -216,6 +236,8 @@ namespace BlazorTelemetry.Sqlite.Migrations
 
                     b.HasIndex("EventKey")
                         .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptUtc");
 
                     b.ToTable("NotificationDeliveries");
                 });
@@ -317,6 +339,8 @@ namespace BlazorTelemetry.Sqlite.Migrations
                     b.HasIndex("ServiceName", "TimestampUtc");
 
                     b.HasIndex("Kind", "Name", "TimestampUtc");
+
+                    b.HasIndex("Kind", "ServiceName", "TimestampUtc");
 
                     b.HasIndex("Kind", "Name", "ServiceName", "TimestampUtc");
 
