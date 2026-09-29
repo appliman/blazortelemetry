@@ -17,6 +17,7 @@ public sealed class TelemetryCircuitHandler(
     private string? _ip;
     private string? _userAgent;
     private readonly CancellationTokenSource _lifetime = new();
+    private int _disposed;
 
     public override async Task OnCircuitOpenedAsync(Circuit circuit, CancellationToken cancellationToken)
     {
@@ -29,6 +30,11 @@ public sealed class TelemetryCircuitHandler(
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         navigation.LocationChanged -= OnLocationChanged;
         _lifetime.Cancel();
         _lifetime.Dispose();

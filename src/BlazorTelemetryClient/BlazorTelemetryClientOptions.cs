@@ -80,6 +80,8 @@ public sealed class BlazorTelemetryClientOptions
     public bool IncludeFormattedLogMessage { get; set; } = true;
     public bool IncludeLogScopes { get; set; } = true;
     public bool ParseLogStateValues { get; set; } = true;
+    public int MaximumExportQueueSize { get; set; } = 512;
+    public int MaximumExportBatchSize { get; set; } = 128;
     public bool CaptureClientAddress { get; set; } = true;
     public bool CaptureNetworkAddresses { get; set; } = true;
     public bool CaptureHttpHeaders { get; set; } = true;

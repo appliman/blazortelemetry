@@ -44,8 +44,17 @@ public static class OtlpEndpointRouteBuilderExtensions
 
         try
         {
-            var items = parser.ParseLogs(ExportLogsServiceRequest.Parser.ParseFrom(payload), authorization.ApplicationName);
+            IReadOnlyList<BlazorTelemetry.Core.TelemetryItem> items;
+            using (payload)
+            {
+                items = parser.ParseLogs(ExportLogsServiceRequest.Parser.ParseFrom(payload), authorization.ApplicationName);
+            }
             return await Persist(coordinator, mediator, items, new ExportLogsServiceResponse(), cancellationToken);
+        }
+        catch (OtlpBatchTooLargeException exception)
+        {
+            logger.LogWarning(exception, "OTLP logs payload contains too many telemetry items.");
+            return TypedResults.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
         catch (InvalidProtocolBufferException exception)
         {
@@ -78,8 +87,17 @@ public static class OtlpEndpointRouteBuilderExtensions
 
         try
         {
-            var items = parser.ParseTraces(ExportTraceServiceRequest.Parser.ParseFrom(payload), authorization.ApplicationName);
+            IReadOnlyList<BlazorTelemetry.Core.TelemetryItem> items;
+            using (payload)
+            {
+                items = parser.ParseTraces(ExportTraceServiceRequest.Parser.ParseFrom(payload), authorization.ApplicationName);
+            }
             return await Persist(coordinator, mediator, items, new ExportTraceServiceResponse(), cancellationToken);
+        }
+        catch (OtlpBatchTooLargeException exception)
+        {
+            logger.LogWarning(exception, "OTLP traces payload contains too many telemetry items.");
+            return TypedResults.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
         catch (InvalidProtocolBufferException exception)
         {
@@ -112,8 +130,17 @@ public static class OtlpEndpointRouteBuilderExtensions
 
         try
         {
-            var items = parser.ParseMetrics(ExportMetricsServiceRequest.Parser.ParseFrom(payload), authorization.ApplicationName);
+            IReadOnlyList<BlazorTelemetry.Core.TelemetryItem> items;
+            using (payload)
+            {
+                items = parser.ParseMetrics(ExportMetricsServiceRequest.Parser.ParseFrom(payload), authorization.ApplicationName);
+            }
             return await Persist(coordinator, mediator, items, new ExportMetricsServiceResponse(), cancellationToken);
+        }
+        catch (OtlpBatchTooLargeException exception)
+        {
+            logger.LogWarning(exception, "OTLP metrics payload contains too many telemetry items.");
+            return TypedResults.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
         catch (InvalidProtocolBufferException exception)
         {
@@ -167,32 +194,42 @@ public static class OtlpEndpointRouteBuilderExtensions
         return Results.Bytes(response.ToByteArray(), "application/x-protobuf");
     }
 
-    private static async Task<byte[]?> ReadBody(HttpRequest request, int maximumBytes, CancellationToken cancellationToken)
+    private static async Task<MemoryStream?> ReadBody(HttpRequest request, int maximumBytes, CancellationToken cancellationToken)
     {
         if (request.ContentLength > maximumBytes)
         {
             return null;
         }
 
-        await using var output = new MemoryStream();
-        var buffer = new byte[64 * 1024];
-        while (true)
+        var output = new MemoryStream(Math.Min(maximumBytes, 64 * 1024));
+        try
         {
-            var read = await request.Body.ReadAsync(buffer, cancellationToken);
-            if (read == 0)
+            var buffer = new byte[64 * 1024];
+            while (true)
             {
-                break;
+                var read = await request.Body.ReadAsync(buffer, cancellationToken);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                if (output.Length + read > maximumBytes)
+                {
+                    output.Dispose();
+                    return null;
+                }
+
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             }
 
-            if (output.Length + read > maximumBytes)
-            {
-                return null;
-            }
-
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            output.Position = 0;
+            return output;
         }
-
-        return output.ToArray();
+        catch
+        {
+            output.Dispose();
+            throw;
+        }
     }
 
     private static string GetDatabasePath(string connectionString)

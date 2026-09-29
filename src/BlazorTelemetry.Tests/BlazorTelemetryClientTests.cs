@@ -78,6 +78,8 @@ public sealed class BlazorTelemetryClientTests
         Assert.DoesNotContain("Cookie", options.RequestHeaders);
         Assert.DoesNotContain("Set-Cookie", options.ResponseHeaders);
         Assert.Equal(OtlpExportProtocol.Grpc, options.Protocol);
+        Assert.Equal(512, options.MaximumExportQueueSize);
+        Assert.Equal(128, options.MaximumExportBatchSize);
     }
 
     [Fact]

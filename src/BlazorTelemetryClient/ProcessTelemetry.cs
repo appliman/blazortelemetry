@@ -14,6 +14,7 @@ public sealed class ProcessTelemetry(ILogger<ProcessTelemetry> _logger) : IHoste
     private readonly Meter _meter = new(METER_NAME);
     private SocketTelemetryListener? _sockets;
     private int _reportedFailure;
+    private int _disposed;
 
     public Task StartAsync(CancellationToken _cancellationToken)
     {
@@ -42,6 +43,11 @@ public sealed class ProcessTelemetry(ILogger<ProcessTelemetry> _logger) : IHoste
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _sockets?.Dispose();
         _sockets = null;
         _meter.Dispose();

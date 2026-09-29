@@ -105,6 +105,12 @@ public static class BlazorTelemetryClientServiceCollectionExtensions
             throw new InvalidOperationException("BlazorTelemetry requires a positive maximum attribute length.");
         }
 
+        if (options.MaximumExportQueueSize <= 0 || options.MaximumExportBatchSize <= 0 ||
+            options.MaximumExportBatchSize > options.MaximumExportQueueSize)
+        {
+            throw new InvalidOperationException("BlazorTelemetry requires a valid bounded export queue.");
+        }
+
         options.ServiceName = options.ServiceName.Trim();
     }
 
@@ -138,7 +144,11 @@ public static class BlazorTelemetryClientServiceCollectionExtensions
             loggingOptions.IncludeScopes = options.IncludeLogScopes;
             loggingOptions.ParseStateValues = options.ParseLogStateValues;
             loggingOptions.SetResourceBuilder(CreateResource(options));
-            loggingOptions.AddOtlpExporter(exporter => ConfigureExporter(exporter, options, OtlpSignal.Logs));
+            loggingOptions.AddOtlpExporter((exporter, processor) =>
+            {
+                ConfigureExporter(exporter, options, OtlpSignal.Logs);
+                ConfigureBatchProcessor(processor.BatchExportProcessorOptions, options);
+            });
             options.ConfigureLogging?.Invoke(loggingOptions);
         }));
     }
@@ -209,7 +219,11 @@ public static class BlazorTelemetryClientServiceCollectionExtensions
             tracing.AddSource(source);
         }
 
-        tracing.AddOtlpExporter(exporter => ConfigureExporter(exporter, options, OtlpSignal.Traces));
+        tracing.AddOtlpExporter(exporter =>
+        {
+            ConfigureExporter(exporter, options, OtlpSignal.Traces);
+            ConfigureBatchProcessor(exporter.BatchExportProcessorOptions, options);
+        });
         options.ConfigureTracing?.Invoke(tracing);
     }
 
@@ -265,6 +279,13 @@ public static class BlazorTelemetryClientServiceCollectionExtensions
         exporter.Endpoint = BuildEndpoint(GetEndpoint(options, signal), protocol, signal);
         exporter.Headers = GetHeaders(options, signal);
         options.ConfigureExporter?.Invoke(exporter);
+    }
+
+    private static void ConfigureBatchProcessor<T>(BatchExportProcessorOptions<T> processor, BlazorTelemetryClientOptions options)
+        where T : class
+    {
+        processor.MaxQueueSize = options.MaximumExportQueueSize;
+        processor.MaxExportBatchSize = options.MaximumExportBatchSize;
     }
 
     private static Uri GetEndpoint(BlazorTelemetryClientOptions options, OtlpSignal signal) => signal switch
