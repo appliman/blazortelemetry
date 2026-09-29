@@ -20,6 +20,7 @@ public sealed class EntityFrameworkTelemetryEnricher : IHostedService, IDisposab
     private readonly UpDownCounter<long> _activeCommands;
     private readonly Histogram<double> _duration;
     private ActivityListener? _listener;
+    private int _disposed;
 
     public EntityFrameworkTelemetryEnricher()
     {
@@ -58,7 +59,13 @@ public sealed class EntityFrameworkTelemetryEnricher : IHostedService, IDisposab
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _listener?.Dispose();
+        _listener = null;
         _meter.Dispose();
     }
 

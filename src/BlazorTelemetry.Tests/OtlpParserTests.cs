@@ -155,6 +155,52 @@ public sealed class OtlpParserTests
         Assert.NotEqual(_items[0].Fingerprint, _items[1].Fingerprint);
         Assert.Equal(DateTimeOffset.FromUnixTimeSeconds(1_700_000_000), MetricCounter.StartTime(_items[0]));
     }
+
+    [Fact]
+    public void ParseLogsBoundsNestedAttributeValues()
+    {
+        var request = new ExportLogsServiceRequest();
+        var scopeLogs = new ScopeLogs();
+        scopeLogs.LogRecords.Add(new LogRecord
+        {
+            Body = new AnyValue { StringValue = new string('x', 100_000) },
+            Attributes =
+            {
+                new KeyValue
+                {
+                    Key = "payload",
+                    Value = new AnyValue
+                    {
+                        ArrayValue = new ArrayValue
+                        {
+                            Values = { new AnyValue { StringValue = new string('y', 100_000) } }
+                        }
+                    }
+                }
+            }
+        });
+        request.ResourceLogs.Add(new ResourceLogs { ScopeLogs = { scopeLogs } });
+
+        var item = Assert.Single(_parser.ParseLogs(request, null));
+
+        Assert.True(item.Body!.Length < 3_000);
+        Assert.True(item.AttributesJson.Length < 3_000);
+    }
+
+    [Fact]
+    public void ParseLogsRejectsAnOversizedItemBatch()
+    {
+        var request = new ExportLogsServiceRequest();
+        var scopeLogs = new ScopeLogs();
+        for (var index = 0; index < 5_001; index++)
+        {
+            scopeLogs.LogRecords.Add(new LogRecord { EventName = $"event-{index}" });
+        }
+        request.ResourceLogs.Add(new ResourceLogs { ScopeLogs = { scopeLogs } });
+
+        Assert.Throws<OtlpBatchTooLargeException>(() => _parser.ParseLogs(request, null));
+    }
+
     private static Resource CreateResource()
     {
         return new Resource

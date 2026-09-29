@@ -196,4 +196,29 @@ public sealed partial class TelemetryCqrsTests
         Assert.False(inProgressPage.IsTruncated);
     }
 
+    [Fact]
+    public async Task QueryRequiresRequestMethodAndIpBeforeCountingAndPagination()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        await _mediator.Store([
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(8), ObservedUtc = timestamp, ServiceName = "api", Name = "placeholder-ip", Body = "GET", AttributesJson = "{\"client.address\":\"—\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(7), ObservedUtc = timestamp, ServiceName = "api", Name = "invalid-attributes", Body = "GET", AttributesJson = "invalid json" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(6), ObservedUtc = timestamp, ServiceName = "api", Name = "missing-method", AttributesJson = "{\"client.address\":\"203.0.113.1\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(5), ObservedUtc = timestamp, ServiceName = "api", Name = "missing-ip", Body = "GET" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(4), ObservedUtc = timestamp, ServiceName = "api", Name = "placeholder-method", Body = "—", AttributesJson = "{\"client.address\":\"203.0.113.1\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(3), ObservedUtc = timestamp, ServiceName = "api", Name = "navigation", Body = "Blazor navigation", AttributesJson = "{\"client.address\":\"203.0.113.1\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(2), ObservedUtc = timestamp, ServiceName = "api", Name = "empty-ip", Body = "POST", AttributesJson = "{\"client.address\":\"  \"}" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp.AddSeconds(1), ObservedUtc = timestamp, ServiceName = "api", Name = "fallback-ip", Body = "POST", AttributesJson = "{\"client.address\":\"  \",\"network.peer.address\":\"203.0.113.2\"}" },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = timestamp, ObservedUtc = timestamp, ServiceName = "api", Name = "primary-ip", Body = "GET", AttributesJson = "{\"client.address\":\"203.0.113.1\"}" }
+        ], CancellationToken.None);
+
+        var page = await _mediator.Query(new TelemetryQuery(TelemetryKind.Request, Take: 1, RequireHttpRequestDetails: true), CancellationToken.None);
+        var unfiltered = await _mediator.Query(new TelemetryQuery(TelemetryKind.Request, Take: 10), CancellationToken.None);
+
+        Assert.Equal("fallback-ip", Assert.Single(page.Items).Name);
+        Assert.Equal(2, page.Total);
+        Assert.True(page.IsTruncated);
+        Assert.Equal(9, unfiltered.Total);
+    }
+
 }
