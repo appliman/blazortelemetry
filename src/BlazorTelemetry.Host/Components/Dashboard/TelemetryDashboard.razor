@@ -52,6 +52,7 @@
     private IReadOnlyList<TelemetryItem> _dashboardMetrics = [];
     private DashboardBreakdown _dashboardBreakdown = DashboardBreakdown.Empty;
     private BlazorDashboardMetrics _blazorDashboard = BlazorDashboardMetrics.Empty;
+    private int _disposed;
 
     private async Task RefreshLoop(CancellationToken cancellationToken)
     {
@@ -144,7 +145,8 @@
                     ExcludedServiceName: _view == "requests" ? HostEnvironment.ApplicationName : null,
                     MinimumStatusCode: minimumStatusCode,
                     MaximumStatusCode: maximumStatusCode,
-                    HasStatusCode: hasStatusCode), _lifetime.Token), _result => _page = _result);
+                    HasStatusCode: hasStatusCode,
+                    RequireHttpRequestDetails: _view == "requests"), _lifetime.Token), _result => _page = _result);
                 if (_view == "metrics" && !_refreshRequested)
                 {
                     if (!_page.Items.Any(_item => _item.Name == _selectedMetric))
@@ -577,9 +579,9 @@
         foreach (var key in new[] { "client.address", "network.peer.address", "http.client_ip", "net.sock.peer.addr", "net.peer.ip" })
         {
             var value = RequestAttribute(item.AttributesJson, key);
-            if (value != "—")
+            if (value != "—" && !string.IsNullOrWhiteSpace(value))
             {
-                return value;
+                return value.Trim();
             }
         }
 
@@ -591,6 +593,11 @@
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _lifetime.Cancel();
         if (_refreshTask is not null)
         {
@@ -730,7 +737,7 @@
                 }
                 else if (_activeView == "requests")
                 {
-                    <p class="bt-result-count">HTTP duration covers server processing. Blazor navigation identifies circuit activity without an HTTP request. In progress means no HTTP completion has been recorded yet.</p>
+                    <p class="bt-result-count">HTTP duration covers server processing. In progress means no HTTP completion has been recorded yet.</p>
                     <table class="bt-requests-table"><thead><tr><th>Date / time</th><th>Route</th><th>Method</th><th>IP address</th><th>User agent</th><th>Trace</th><th>Duration</th><th>Status</th></tr></thead><tbody>
                     @foreach (var _item in _page.Items)
                     {

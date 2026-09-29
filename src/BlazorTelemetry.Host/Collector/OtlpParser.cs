@@ -12,6 +12,9 @@ namespace BlazorTelemetry.AspNetCore;
 
 internal sealed class OtlpParser(OtlpValueConverter valueConverter)
 {
+    private const int MAXIMUM_DETAILS_LENGTH = 16 * 1024;
+    private const int MAXIMUM_ITEMS_PER_REQUEST = 5_000;
+
     public IReadOnlyList<TelemetryItem> ParseLogs(ExportLogsServiceRequest request, string? fallbackService)
     {
         var result = new List<TelemetryItem>();
@@ -25,7 +28,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                 foreach (var record in scopeLogs.LogRecords)
                 {
                     var timestamp = FromUnixNano(record.TimeUnixNano != 0 ? record.TimeUnixNano : record.ObservedTimeUnixNano);
-                    result.Add(new TelemetryItem
+                    AddItem(result, new TelemetryItem
                     {
                         Kind = TelemetryKind.Log,
                         TimestampUtc = timestamp,
@@ -41,7 +44,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         SpanId = ToHex(record.SpanId),
                         ResourceAttributesJson = resourceJson,
                         AttributesJson = valueConverter.ToJson(record.Attributes),
-                        DetailsJson = JsonSerializer.Serialize(new
+                        DetailsJson = SerializeDetails(new
                         {
                             scope = scopeLogs.Scope?.Name,
                             scopeVersion = scopeLogs.Scope?.Version,
@@ -75,7 +78,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         : 0;
                     var attributes = valueConverter.ToDictionary(span.Attributes);
                     var attributesJson = JsonSerializer.Serialize(attributes);
-                    result.Add(new TelemetryItem
+                    AddItem(result, new TelemetryItem
                     {
                         Kind = TelemetryKind.Trace,
                         TimestampUtc = FromUnixNano(span.StartTimeUnixNano),
@@ -92,17 +95,17 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         Body = span.Status?.Message,
                         ResourceAttributesJson = resourceJson,
                         AttributesJson = attributesJson,
-                        DetailsJson = JsonSerializer.Serialize(new
+                        DetailsJson = SerializeDetails(new
                         {
                             kind = span.Kind.ToString(),
                             scope = scopeSpans.Scope?.Name,
-                            events = span.Events.Select(item => new
+                            events = span.Events.Take(valueConverter.MaximumCollectionItems).Select(item => new
                             {
                                 item.Name,
                                 timestampUtc = FromUnixNano(item.TimeUnixNano),
                                 attributes = valueConverter.ToDictionary(item.Attributes)
                             }),
-                            links = span.Links.Select(link => new
+                            links = span.Links.Take(valueConverter.MaximumCollectionItems).Select(link => new
                             {
                                 traceId = ToHex(link.TraceId),
                                 spanId = ToHex(link.SpanId),
@@ -114,7 +117,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
 
                     if (span.Kind == OpenTelemetry.Proto.Trace.V1.Span.Types.SpanKind.Server)
                     {
-                        result.Add(new TelemetryItem
+                        AddItem(result, new TelemetryItem
                         {
                             Kind = TelemetryKind.Request,
                             TimestampUtc = FromUnixNano(span.StartTimeUnixNano),
@@ -131,7 +134,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             StatusCode = GetInt(attributes, "http.response.status_code") ?? GetInt(attributes, "http.status_code"),
                             ResourceAttributesJson = resourceJson,
                             AttributesJson = attributesJson,
-                            DetailsJson = JsonSerializer.Serialize(new
+                            DetailsJson = SerializeDetails(new
                             {
                                 kind = span.Kind.ToString(),
                                 source = "OTLP server span"
@@ -205,8 +208,8 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             sum = point.HasSum ? (double?)point.Sum : null,
                             min = point.HasMin ? (double?)point.Min : null,
                             max = point.HasMax ? (double?)point.Max : null,
-                            bounds = point.ExplicitBounds,
-                            buckets = point.BucketCounts,
+                            bounds = point.ExplicitBounds.Take(valueConverter.MaximumCollectionItems).ToArray(),
+                            buckets = point.BucketCounts.Take(valueConverter.MaximumCollectionItems).ToArray(),
                             aggregationTemporality = metric.Histogram.AggregationTemporality.ToString(),
                             exemplars = SerializeExemplars(point.Exemplars)
                         });
@@ -225,8 +228,8 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             max = point.HasMax ? (double?)point.Max : null,
                             point.Scale,
                             point.ZeroCount,
-                            positive = point.Positive,
-                            negative = point.Negative,
+                            positive = SerializeBuckets(point.Positive),
+                            negative = SerializeBuckets(point.Negative),
                             aggregationTemporality = metric.ExponentialHistogram.AggregationTemporality.ToString(),
                             exemplars = SerializeExemplars(point.Exemplars)
                         });
@@ -241,7 +244,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         {
                             point.Count,
                             point.Sum,
-                            quantiles = point.QuantileValues.Select(value => new { value.Quantile, value.Value })
+                            quantiles = point.QuantileValues.Take(valueConverter.MaximumCollectionItems).Select(value => new { value.Quantile, value.Value })
                         });
                 }
                 break;
@@ -279,7 +282,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
     {
         var timestamp = FromUnixNano(timestampNano);
         var attributesJson = valueConverter.ToJson(attributes);
-        result.Add(new TelemetryItem
+        AddItem(result, new TelemetryItem
         {
             Kind = TelemetryKind.Metric,
             TimestampUtc = timestamp,
@@ -294,14 +297,14 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             NumericValue = value,
             ResourceAttributesJson = resourceJson,
             AttributesJson = attributesJson,
-            DetailsJson = JsonSerializer.Serialize(new { scope, data = details }),
+            DetailsJson = SerializeDetails(new { scope, data = details }),
             Fingerprint = Hash($"metric:{service}:{resourceJson}:{scope}:{metric.Name}:{timestampNano}:{attributesJson}:{value}")
         });
     }
 
     private object SerializeExemplars(IEnumerable<Exemplar> exemplars)
     {
-        return exemplars.Select(exemplar => new
+        return exemplars.Take(valueConverter.MaximumCollectionItems).Select(exemplar => new
         {
             timestampUtc = FromUnixNano(exemplar.TimeUnixNano),
             traceId = ToHex(exemplar.TraceId),
@@ -309,6 +312,15 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             value = exemplar.ValueCase == Exemplar.ValueOneofCase.AsDouble ? exemplar.AsDouble : exemplar.AsInt,
             attributes = valueConverter.ToDictionary(exemplar.FilteredAttributes)
         }).ToArray();
+    }
+
+    private object SerializeBuckets(ExponentialHistogramDataPoint.Types.Buckets buckets)
+    {
+        return new
+        {
+            buckets.Offset,
+            bucketCounts = buckets.BucketCounts.Take(valueConverter.MaximumCollectionItems).ToArray()
+        };
     }
 
     private string? ValueToText(AnyValue? value)
@@ -384,5 +396,23 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
     private static string Hash(string value)
     {
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+    }
+
+    private static void AddItem(List<TelemetryItem> result, TelemetryItem item)
+    {
+        if (result.Count >= MAXIMUM_ITEMS_PER_REQUEST)
+        {
+            throw new OtlpBatchTooLargeException(MAXIMUM_ITEMS_PER_REQUEST);
+        }
+
+        result.Add(item);
+    }
+
+    private static string SerializeDetails(object value)
+    {
+        var serialized = JsonSerializer.Serialize(value);
+        return serialized.Length <= MAXIMUM_DETAILS_LENGTH
+            ? serialized
+            : "{\"truncated\":true}";
     }
 }

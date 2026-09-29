@@ -13,6 +13,7 @@ internal sealed class IngestionCoordinator : IDisposable
     private readonly IHostApplicationLifetime _lifetime;
     private readonly TimeSpan _timeout;
     private readonly CancellationTokenRegistration _stoppingRegistration;
+    private int _disposed;
 
     public IngestionCoordinator(BlazorTelemetryOptions options, CollectorCounters counters, IHostApplicationLifetime lifetime)
     {
@@ -25,8 +26,29 @@ internal sealed class IngestionCoordinator : IDisposable
 
     public async Task<(bool Accepted, bool Persisted)> Enqueue(IReadOnlyList<TelemetryItem> items, IMediator mediator, CancellationToken cancellationToken)
     {
-        if (_lifetime.ApplicationStopping.IsCancellationRequested || !_slots.Wait(0))
+        if (Volatile.Read(ref _disposed) != 0 || _lifetime.ApplicationStopping.IsCancellationRequested)
         {
+            _counters.AddRejected(items.Count);
+            return (false, false);
+        }
+
+        bool slotAvailable;
+        try
+        {
+            slotAvailable = _slots.Wait(0);
+        }
+        catch (ObjectDisposedException)
+        {
+            _counters.AddRejected(items.Count);
+            return (false, false);
+        }
+
+        if (!slotAvailable || Volatile.Read(ref _disposed) != 0)
+        {
+            if (slotAvailable)
+            {
+                ReleaseSlot();
+            }
             _counters.AddRejected(items.Count);
             return (false, false);
         }
@@ -92,13 +114,19 @@ internal sealed class IngestionCoordinator : IDisposable
 
         batch.Completion.TrySetResult(persisted);
         _counters.ChangeQueueDepth(-1);
-        _slots.Release();
+        ReleaseSlot();
     }
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _stoppingRegistration.Dispose();
         Stop();
+        _slots.Dispose();
     }
 
     private void Abandon(Guid batchId, PendingBatch batch)
@@ -122,6 +150,22 @@ internal sealed class IngestionCoordinator : IDisposable
         foreach (var entry in _batches)
         {
             Abandon(entry.Key, entry.Value);
+        }
+    }
+
+    private void ReleaseSlot()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _slots.Release();
+        }
+        catch (ObjectDisposedException)
+        {
         }
     }
 

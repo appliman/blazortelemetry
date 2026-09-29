@@ -4,6 +4,7 @@
 @code {
     private readonly string _elementId = $"telemetry-chart-{Guid.NewGuid():N}";
     private IJSObjectReference? _module;
+    private int _disposed;
 
     [Parameter]
     public IReadOnlyList<string> Labels { get; set; } = [];
@@ -49,7 +50,7 @@
 
     public async ValueTask DisposeAsync()
     {
-        if (_module is null)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0 || _module is null)
         {
             return;
         }

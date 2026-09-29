@@ -21,7 +21,15 @@ internal sealed class OtlpLogsGrpcService(
             throw new RpcException(new Status(StatusCode.Unauthenticated, "The ingestion key is invalid."));
         }
 
-        var items = parser.ParseLogs(request, authorization.ApplicationName);
+        IReadOnlyList<BlazorTelemetry.Core.TelemetryItem> items;
+        try
+        {
+            items = parser.ParseLogs(request, authorization.ApplicationName);
+        }
+        catch (OtlpBatchTooLargeException exception)
+        {
+            throw new RpcException(new Status(StatusCode.ResourceExhausted, exception.Message));
+        }
         var result = await coordinator.Enqueue(items, mediator, context.CancellationToken);
         if (!result.Accepted)
         {

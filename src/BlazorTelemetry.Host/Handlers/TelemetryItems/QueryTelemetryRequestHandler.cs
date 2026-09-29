@@ -35,7 +35,22 @@ internal sealed class QueryTelemetryRequestHandler(
         var take = Math.Clamp(query.Take, 1, options.MaximumQueryRows);
         var skip = Math.Max(0, query.Skip);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var source = context.TelemetryItems.AsNoTracking().AsQueryable();
+        var source = query.RequireHttpRequestDetails
+            ? context.TelemetryItems.FromSqlRaw("""
+                SELECT * FROM "TelemetryItems"
+                WHERE "Body" IS NOT NULL
+                  AND TRIM("Body") NOT IN ('', '—', 'Blazor navigation')
+                  AND CASE WHEN json_valid("AttributesJson") THEN
+                      COALESCE(
+                          NULLIF(TRIM(json_extract("AttributesJson", '$."client.address"'), ' —'), ''),
+                          NULLIF(TRIM(json_extract("AttributesJson", '$."network.peer.address"'), ' —'), ''),
+                          NULLIF(TRIM(json_extract("AttributesJson", '$."http.client_ip"'), ' —'), ''),
+                          NULLIF(TRIM(json_extract("AttributesJson", '$."net.sock.peer.addr"'), ' —'), ''),
+                          NULLIF(TRIM(json_extract("AttributesJson", '$."net.peer.ip"'), ' —'), '')
+                      ) IS NOT NULL
+                  ELSE 0 END
+                """).AsNoTracking()
+            : context.TelemetryItems.AsNoTracking().AsQueryable();
 
         if (query.Kind.HasValue)
         {
