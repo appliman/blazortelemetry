@@ -122,7 +122,7 @@ public sealed partial class TelemetryCqrsTests
         Assert.All(_metrics, _item =>
         {
             Assert.Null(_item.Body);
-            Assert.DoesNotContain("retired-", _item.ResourceAttributesJson);
+            Assert.DoesNotContain("retired-", _item.ServiceInstanceId ?? string.Empty);
         });
         // Each counter retains the predecessor needed to calculate its first visible rate.
         foreach (var _name in ResourceMetricNames.All)

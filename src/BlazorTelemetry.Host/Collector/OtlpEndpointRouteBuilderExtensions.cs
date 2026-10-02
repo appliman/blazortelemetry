@@ -142,6 +142,11 @@ public static class OtlpEndpointRouteBuilderExtensions
             logger.LogWarning(exception, "OTLP metrics payload contains too many telemetry items.");
             return TypedResults.StatusCode(StatusCodes.Status413PayloadTooLarge);
         }
+        catch (OverflowException exception)
+        {
+            logger.LogWarning(exception, "OTLP metrics value cannot be represented safely.");
+            return TypedResults.BadRequest("OTLP metrics value cannot be represented safely.");
+        }
         catch (InvalidProtocolBufferException exception)
         {
             logger.LogWarning(exception, "Invalid OTLP metrics payload.");

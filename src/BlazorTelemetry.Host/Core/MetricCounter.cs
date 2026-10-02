@@ -6,20 +6,13 @@ public static class MetricCounter
 {
     public static string SeriesKey(TelemetryItem _item) => JsonSerializer.Serialize(new[]
     {
-        _item.ServiceName, _item.Name, CanonicalJson(_item.ResourceAttributesJson),
-        CanonicalJson(_item.AttributesJson), ReadScope(_item.DetailsJson)
+        _item.ServiceName, _item.Name, _item.ResourceId == 0 ? CanonicalJson(_item.ResourceAttributesJson) : _item.ResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        CanonicalJson(_item.AttributesJson), _item.ScopeName ?? string.Empty
     });
 
-    public static bool IsDelta(TelemetryItem _item) => ReadData(_item.DetailsJson, "aggregationTemporality")
-        ?.Equals("Delta", StringComparison.OrdinalIgnoreCase) == true;
+    public static bool IsDelta(TelemetryItem _item) => _item.AggregationTemporality?.Equals("Delta", StringComparison.OrdinalIgnoreCase) == true;
 
-    public static DateTimeOffset? StartTime(TelemetryItem _item)
-    {
-        var _text = ReadData(_item.DetailsJson, "startTimeUnixNano");
-        return ulong.TryParse(_text, out var _nano) && _nano > 0
-            ? DateTimeOffset.UnixEpoch.AddTicks((long)(_nano / 100))
-            : null;
-    }
+    public static DateTimeOffset? StartTime(TelemetryItem _item) => _item.StartTimeUtc;
 
     public static double? Increment(TelemetryItem _current, TelemetryItem? _previous, DateTimeOffset _fromUtc)
     {
@@ -89,30 +82,4 @@ public static class MetricCounter
         }
     }
 
-    private static string? ReadData(string _json, string _property)
-    {
-        try
-        {
-            using var _document = JsonDocument.Parse(_json);
-            return _document.RootElement.TryGetProperty("data", out var _data)
-                && _data.ValueKind == JsonValueKind.Object && _data.TryGetProperty(_property, out var _value) ? _value.ToString() : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static string ReadScope(string _json)
-    {
-        try
-        {
-            using var _document = JsonDocument.Parse(_json);
-            return _document.RootElement.TryGetProperty("scope", out var _scope) ? _scope.ToString() : string.Empty;
-        }
-        catch (JsonException)
-        {
-            return string.Empty;
-        }
-    }
 }

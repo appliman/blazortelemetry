@@ -483,6 +483,88 @@
         _ => JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true })
     };
 
+    private static IReadOnlyList<LogDetailEntry> TypedEntries(TelemetryItem _item)
+    {
+        var _entries = new List<LogDetailEntry>();
+        void Add(string _name, object? _value)
+        {
+            if (_value is not null)
+            {
+                _entries.Add(new(_name, Convert.ToString(_value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty));
+            }
+        }
+        Add("CollectionsTruncated", _item.CollectionsTruncated ? true : null);
+        Add("ScopeName", _item.ScopeName);
+        Add("ScopeVersion", _item.ScopeVersion);
+        Add("Flags", _item.Flags);
+        Add("DroppedAttributesCount", _item.DroppedAttributesCount);
+        Add("SpanKind", _item.SpanKind);
+        Add("Source", _item.Source);
+        Add("CircuitId", _item.CircuitId);
+        Add("AggregationTemporality", _item.AggregationTemporality);
+        Add("StartTimeUtc", _item.StartTimeUtc);
+        Add("IsMonotonic", _item.IsMonotonic);
+        Add("Count", _item.Count);
+        Add("Sum", _item.Sum);
+        Add("Minimum", _item.Minimum);
+        Add("Maximum", _item.Maximum);
+        Add("Scale", _item.Scale);
+        Add("ZeroCount", _item.ZeroCount);
+        Add("PositiveOffset", _item.PositiveOffset);
+        Add("NegativeOffset", _item.NegativeOffset);
+        foreach (var _event in _item.Events)
+        {
+            Add($"Event[{_event.Ordinal}]", $"{_event.TimestampUtc:O} {_event.Name}");
+            foreach (var _attribute in JsonEntries(_event.AttributesJson))
+            {
+                Add($"Event[{_event.Ordinal}].{_attribute.Name}", _attribute.Value);
+            }
+        }
+        foreach (var _link in _item.Links)
+        {
+            Add($"Link[{_link.Ordinal}]", $"{_link.TraceId}/{_link.SpanId}");
+            foreach (var _attribute in JsonEntries(_link.AttributesJson))
+            {
+                Add($"Link[{_link.Ordinal}].{_attribute.Name}", _attribute.Value);
+            }
+        }
+        return _entries;
+    }
+
+    private static IReadOnlyList<LogDetailEntry> ResourceEntries(TelemetryItem _item)
+    {
+        var _entries = JsonEntries(_item.ResourceAttributesJson).ToList();
+        if (_item.ServiceName is { } _ServiceName)
+        {
+            _entries.Add(new("service.name", _ServiceName));
+        }
+        if (_item.ServiceVersion is { } _ServiceVersion)
+        {
+            _entries.Add(new("service.version", _ServiceVersion));
+        }
+        if (_item.Environment is { } _Environment)
+        {
+            _entries.Add(new("deployment.environment.name", _Environment));
+        }
+        if (_item.ServiceInstanceId is { } _ServiceInstanceId)
+        {
+            _entries.Add(new("service.instance.id", _ServiceInstanceId));
+        }
+        if (_item.SdkName is { } _SdkName)
+        {
+            _entries.Add(new("telemetry.sdk.name", _SdkName));
+        }
+        if (_item.SdkLanguage is { } _SdkLanguage)
+        {
+            _entries.Add(new("telemetry.sdk.language", _SdkLanguage));
+        }
+        if (_item.SdkVersion is { } _SdkVersion)
+        {
+            _entries.Add(new("telemetry.sdk.version", _SdkVersion));
+        }
+        return _entries;
+    }
+
     private sealed record LogDetailEntry(string Name, string Value);
 
     private ValueTask FocusFirstDrawerControl() => _logCloseButton.FocusAsync();
@@ -583,6 +665,10 @@
 
     private static string RequestIp(TelemetryItem item)
     {
+        if (!string.IsNullOrWhiteSpace(item.ClientAddress))
+        {
+            return item.ClientAddress.Trim();
+        }
         foreach (var key in new[] { "client.address", "network.peer.address", "http.client_ip", "net.sock.peer.addr", "net.peer.ip" })
         {
             var value = RequestAttribute(item.AttributesJson, key);
@@ -727,7 +813,7 @@
                             <td class="bt-request-route">@_item.Name</td>
                             <td class="mono">@_item.Body</td>
                             <td class="mono">@RequestIp(_item)</td>
-                            <td class="bt-request-context">@RequestAttribute(_item.AttributesJson, "user_agent.original")</td>
+                            <td class="bt-request-context">@(_item.UserAgent ?? "—")</td>
                             <td class="bt-request-trace mono">
                                 @if (HasCorrelatedTrace(_item))
                                 {
@@ -883,7 +969,7 @@
                             <div><dt>Service</dt><dd><pre>@_span.ServiceName</pre></dd></div>
                             <div><dt>Version</dt><dd><pre>@(_span.ServiceVersion ?? "—")</pre></dd></div>
                             <div><dt>Environment</dt><dd><pre>@(_span.Environment ?? "—")</pre></dd></div>
-                            @foreach (var _entry in JsonEntries(_span.ResourceAttributesJson))
+                            @foreach (var _entry in ResourceEntries(_span))
                             {
                                 <div><dt>@_entry.Name</dt><dd><pre>@_entry.Value</pre></dd></div>
                             }
@@ -892,12 +978,12 @@
                     <section class="bt-log-section">
                         <div class="bt-log-section-title"><h3>Details and events</h3></div>
                         <dl class="bt-attribute-list">
-                            @foreach (var _entry in JsonEntries(_span.DetailsJson))
+                            @foreach (var _entry in TypedEntries(_span))
                             {
                                 <div><dt>@_entry.Name</dt><dd><pre>@_entry.Value</pre></dd></div>
                             }
                         </dl>
-                        @if (JsonEntries(_span.DetailsJson).Count == 0)
+                        @if (TypedEntries(_span).Count == 0)
                         {
                             <p class="bt-log-no-value">No additional details were provided.</p>
                         }
@@ -963,9 +1049,9 @@
                     </section>
 
                     <section class="bt-log-section">
-                        <div class="bt-log-section-title"><h3>OpenTelemetry resource</h3><span>@JsonEntries(log.ResourceAttributesJson).Count</span></div>
+                        <div class="bt-log-section-title"><h3>OpenTelemetry resource</h3><span>@ResourceEntries(log).Count</span></div>
                         <dl class="bt-attribute-list">
-                            @foreach (var entry in JsonEntries(log.ResourceAttributesJson))
+                            @foreach (var entry in ResourceEntries(log))
                             {
                                 <div><dt>@entry.Name</dt><dd><pre>@entry.Value</pre></dd></div>
                             }
@@ -973,9 +1059,9 @@
                     </section>
 
                     <section class="bt-log-section">
-                        <div class="bt-log-section-title"><h3>Scope and transport</h3><span>@JsonEntries(log.DetailsJson).Count</span></div>
+                        <div class="bt-log-section-title"><h3>Scope and transport</h3><span>@TypedEntries(log).Count</span></div>
                         <dl class="bt-attribute-list">
-                            @foreach (var entry in JsonEntries(log.DetailsJson))
+                            @foreach (var entry in TypedEntries(log))
                             {
                                 <div><dt>@entry.Name</dt><dd><pre>@entry.Value</pre></dd></div>
                             }

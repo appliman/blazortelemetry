@@ -33,7 +33,7 @@ internal sealed class GetResourceMetricsRequestHandler(
     private async Task<IReadOnlyList<TelemetryItem>> GetResourceMetrics(DateTimeOffset fromUtc, DateTimeOffset toUtc, string? serviceName, CancellationToken cancellationToken)
     {
         await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var _source = _context.TelemetryItems.AsNoTracking().Where(_item => _item.Kind == TelemetryKind.Metric
+        var _source = _context.QueryTelemetry(TelemetryKind.Metric).AsNoTracking().Where(_item => _item.Kind == TelemetryKind.Metric
             && _item.TimestampUtc <= toUtc && _item.NumericValue.HasValue);
         if (!string.IsNullOrWhiteSpace(serviceName))
         {
@@ -63,7 +63,7 @@ internal sealed class GetResourceMetricsRequestHandler(
                 continue;
             }
             var _firstTimestamp = _points.Min(_item => _item.TimestampUtc);
-            var _baselines = await MetricBaselines(_context.TelemetryItems, _instrument, _pointsQuery, _firstTimestamp)
+            var _baselines = await MetricBaselines(_context.QueryTelemetry(TelemetryKind.Metric), _instrument, _pointsQuery, _firstTimestamp)
                 .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
                 .Take(_budget - _points.Count).Select(METRIC_PROJECTION).ToListAsync(cancellationToken);
             _result.AddRange(_baselines);

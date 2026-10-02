@@ -4,10 +4,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace BlazorTelemetry.Sqlite;
 
-public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> options) : DbContext(options), IDataProtectionKeyContext
+public sealed partial class TelemetryDbContext(DbContextOptions<TelemetryDbContext> options) : DbContext(options), IDataProtectionKeyContext
 {
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
-    public DbSet<TelemetryItem> TelemetryItems => Set<TelemetryItem>();
+    public IQueryable<TelemetryItem> TelemetryItems => QueryTelemetry();
     public DbSet<IngestionApplication> IngestionApplications => Set<IngestionApplication>();
     public DbSet<AlertRule> AlertRules => Set<AlertRule>();
     public DbSet<Incident> Incidents => Set<Incident>();
@@ -22,26 +22,7 @@ public sealed class TelemetryDbContext(DbContextOptions<TelemetryDbContext> opti
             entity.HasKey(key => key.Id);
         });
 
-        modelBuilder.Entity<TelemetryItem>(entity =>
-        {
-            entity.ToTable("TelemetryItems");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.TimestampUtc).HasConversion<long>();
-            entity.Property(item => item.ObservedUtc).HasConversion<long>();
-            entity.Property(item => item.ServiceName).HasMaxLength(256);
-            entity.Property(item => item.Name).HasMaxLength(512);
-            entity.Property(item => item.TraceId).HasMaxLength(32);
-            entity.Property(item => item.SpanId).HasMaxLength(16);
-            entity.Property(item => item.Fingerprint).HasMaxLength(128);
-            entity.HasIndex(item => item.TimestampUtc);
-            entity.HasIndex(item => new { item.Kind, item.TimestampUtc });
-            entity.HasIndex(item => new { item.Kind, item.Name, item.TimestampUtc });
-            entity.HasIndex(item => new { item.Kind, item.Name, item.ServiceName, item.TimestampUtc });
-            entity.HasIndex(item => new { item.Kind, item.ServiceName, item.TimestampUtc });
-            entity.HasIndex(item => new { item.ServiceName, item.TimestampUtc });
-            entity.HasIndex(item => item.TraceId);
-            entity.HasIndex(item => item.Fingerprint).IsUnique().HasFilter("Fingerprint IS NOT NULL");
-        });
+        ConfigureTelemetry(modelBuilder);
 
         modelBuilder.Entity<IngestionApplication>(entity =>
         {

@@ -39,7 +39,8 @@ public sealed class ProcessMetricSeriesTests
         var _before = Item("process.network.io", _from.AddSeconds(-10), 90000);
         var _reset = Item("process.network.io", _from, 2048);
         var _delta = Item("process.network.io", _from.AddSeconds(10), 10240);
-        _delta.DetailsJson = JsonSerializer.Serialize(new { data = new { aggregationTemporality = "Delta", startTimeUnixNano = (ulong)(_from - DateTimeOffset.UnixEpoch).Ticks * 100 } });
+        _delta.AggregationTemporality = "Delta";
+        _delta.StartTimeUtc = _from;
         var _rates = MetricCounter.Rates([_before, _reset, _delta], _from, _from.AddSeconds(20));
         Assert.Equal(204.8, _rates[0].Value, 4);
         Assert.Equal(1024, _rates[1].Value);

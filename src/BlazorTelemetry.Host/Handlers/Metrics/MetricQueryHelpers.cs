@@ -9,17 +9,34 @@ internal static class MetricQueryHelpers
 {
     internal static readonly Expression<Func<TelemetryItem, TelemetryItem>> METRIC_PROJECTION = _item => new TelemetryItem
     {
+        CollectionsTruncated = _item.CollectionsTruncated,
         Id = _item.Id,
         Kind = _item.Kind,
+        ResourceId = _item.ResourceId,
         TimestampUtc = _item.TimestampUtc,
         ServiceName = _item.ServiceName,
+        ServiceVersion = _item.ServiceVersion,
+        ServiceInstanceId = _item.ServiceInstanceId,
+        Environment = _item.Environment,
         Name = _item.Name,
         Unit = _item.Unit,
         MetricType = _item.MetricType,
         NumericValue = _item.NumericValue,
         ResourceAttributesJson = _item.ResourceAttributesJson,
         AttributesJson = _item.AttributesJson,
-        DetailsJson = _item.DetailsJson
+        ScopeName = _item.ScopeName,
+        ScopeVersion = _item.ScopeVersion,
+        StartTimeUtc = _item.StartTimeUtc,
+        AggregationTemporality = _item.AggregationTemporality,
+        IsMonotonic = _item.IsMonotonic,
+        Count = _item.Count,
+        Sum = _item.Sum,
+        Minimum = _item.Minimum,
+        Maximum = _item.Maximum,
+        Scale = _item.Scale,
+        ZeroCount = _item.ZeroCount,
+        PositiveOffset = _item.PositiveOffset,
+        NegativeOffset = _item.NegativeOffset
     };
 
     internal static readonly string[] BLAZOR_METRIC_NAMES =
@@ -186,35 +203,15 @@ internal static class MetricQueryHelpers
 
     internal static (DateTimeOffset TimestampUtc, string SeriesKey, double[] Bounds, long[] Buckets, double Sum, double? Maximum)? ReadHistogramSnapshot(TelemetryItem item)
     {
-        try
-        {
-            using var document = JsonDocument.Parse(item.DetailsJson);
-            if (!TryGetProperty(document.RootElement, "data", out var data)
-                || !TryGetProperty(data, "bounds", out var boundsElement)
-                || !TryGetProperty(data, "buckets", out var bucketsElement))
-            {
-                return null;
-            }
-
-            var multiplier = DurationToMillisecondsMultiplier(item.Unit);
-            var bounds = boundsElement.EnumerateArray().Select(value => value.GetDouble() * multiplier).ToArray();
-            var buckets = bucketsElement.EnumerateArray().Select(value => checked((long)value.GetUInt64())).ToArray();
-            var sum = TryGetProperty(data, "sum", out var sumElement) && sumElement.ValueKind == JsonValueKind.Number
-                ? sumElement.GetDouble() * multiplier
-                : 0;
-            var maximum = TryGetProperty(data, "max", out var maxElement) && maxElement.ValueKind == JsonValueKind.Number
-                ? maxElement.GetDouble() * multiplier
-                : (double?)null;
-            return (item.TimestampUtc, MetricSeriesKey(item), bounds, buckets, sum, maximum);
-        }
-        catch (JsonException)
+        if (item.MetricType != "histogram" || item.Buckets.Count == 0)
         {
             return null;
         }
-        catch (OverflowException)
-        {
-            return null;
-        }
+        var multiplier = DurationToMillisecondsMultiplier(item.Unit);
+        var ordered = item.Buckets.Where(_bucket => _bucket.Group == 0).OrderBy(_bucket => _bucket.Ordinal).ToArray();
+        var bounds = ordered.Where(_bucket => _bucket.UpperBound.HasValue).Select(_bucket => _bucket.UpperBound!.Value * multiplier).ToArray();
+        var buckets = ordered.Select(_bucket => _bucket.Count).ToArray();
+        return (item.TimestampUtc, MetricSeriesKey(item), bounds, buckets, (item.Sum ?? 0) * multiplier, item.Maximum * multiplier);
     }
 
     internal static void AddBuckets(long[] target, IReadOnlyList<long> values)
@@ -252,7 +249,7 @@ internal static class MetricQueryHelpers
 
     internal static string MetricSeriesKey(TelemetryItem item)
     {
-        return $"{item.Name}\u001f{item.ServiceName}\u001f{item.ResourceAttributesJson}\u001f{item.AttributesJson}";
+        return $"{item.Name}\u001f{item.ServiceName}\u001f{(item.ResourceId == 0 ? item.ResourceAttributesJson : item.ResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture))}\u001f{item.ScopeName}\u001f{item.AttributesJson}";
     }
 
     internal static DateTimeOffset ToTenSecondBucket(DateTimeOffset timestamp)
@@ -326,14 +323,15 @@ internal static class MetricQueryHelpers
             return null;
         }
     }
-    internal static IQueryable<TelemetryItem> MetricBaselines(DbSet<TelemetryItem> _items, IQueryable<TelemetryItem> _source, IQueryable<TelemetryItem> _points, DateTimeOffset _beforeUtc)
+    internal static IQueryable<TelemetryItem> MetricBaselines(IQueryable<TelemetryItem> _items, IQueryable<TelemetryItem> _source, IQueryable<TelemetryItem> _points, DateTimeOffset _beforeUtc)
     {
-        var _series = _points.Select(_item => new { _item.ServiceName, _item.ResourceAttributesJson, _item.AttributesJson }).Distinct();
+        var _series = _points.Select(_item => new { _item.ServiceName, _item.ResourceId, _item.AttributesJson, _item.ScopeName }).Distinct();
         // A scalar indexed lookup per active series, instead of sorting all retained
         // metric payloads with ROW_NUMBER or grouping the complete history.
         var _ids = _series.Select(_seriesItem => _source
             .Where(_item => _item.ServiceName == _seriesItem.ServiceName
-                && _item.ResourceAttributesJson == _seriesItem.ResourceAttributesJson
+                && _item.ResourceId == _seriesItem.ResourceId
+                && _item.ScopeName == _seriesItem.ScopeName
                 && _item.AttributesJson == _seriesItem.AttributesJson
                 && _item.TimestampUtc < _beforeUtc)
             .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
