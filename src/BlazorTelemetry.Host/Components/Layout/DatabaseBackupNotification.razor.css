@@ -1,0 +1,1 @@
+.backup-notification { position: fixed; right: 1rem; bottom: 1rem; z-index: 1080; max-width: min(28rem, calc(100vw - 2rem)); margin: 0; box-shadow: 0 .5rem 1.5rem #0004; }
