@@ -1,18 +1,56 @@
 ﻿@page "/administration"
 @attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
 @rendermode InteractiveServer
+@implements IAsyncDisposable
+@using System.Security.Claims
+@using BlazorTelemetry.Host.Administration
 @using BlazorTelemetry.Core
 @using BlazorTelemetry.Host.Contracts.Models.IngestionApplications
 @inject IMediator Repository
 @inject BlazorTelemetryOptions Options
+@inject DatabaseBackupWorker BackupWorker
+@inject AuthenticationStateProvider AuthenticationStateProvider
 
 @code {
     private IReadOnlyList<IngestionApplication> _applications = [];
     private string? _error;
     private int? _selectedApplicationId;
+    private readonly CancellationTokenSource _backupLifetime = new();
+    private bool _backupPending;
+    private bool _backupFailed;
+    private bool _backupQueueFull;
+    private string? _downloadUrl;
+    private DatabaseBackupJob? _availableArchive;
+    private string? _backupOwner;
+    private Task? _archiveMonitor;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _archiveMonitor = MonitorAvailableArchive();
+            var _owner = await GetBackupOwner();
+            if (_owner is not null && BackupWorker.Find(_owner) is { } _job)
+            {
+                await ObserveBackup(_job);
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _backupLifetime.CancelAsync();
+        if (_archiveMonitor is not null)
+        {
+            await _archiveMonitor;
+        }
+        _backupLifetime.Dispose();
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        _backupOwner = await GetBackupOwner();
+        RefreshAvailableArchive();
         await LoadApplications();
     }
 
@@ -31,6 +69,77 @@
     private void SelectApplication(int id)
     {
         _selectedApplicationId = id;
+    }
+
+    private async Task StartBackup()
+    {
+        _backupFailed = false;
+        _backupQueueFull = false;
+        var _owner = await GetBackupOwner();
+        if (_owner is null)
+        {
+            _backupFailed = true;
+            return;
+        }
+        var _job = BackupWorker.Enqueue(_owner);
+        if (_job is null)
+        {
+            _backupQueueFull = true;
+            return;
+        }
+        RefreshAvailableArchive();
+        await ObserveBackup(_job);
+    }
+
+    private async Task<string?> GetBackupOwner()
+    {
+        var _state = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        return _state.User.IsInRole("Administrator")
+            ? _state.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            : null;
+    }
+
+    private async Task ObserveBackup(DatabaseBackupJob job)
+    {
+        _backupPending = !job.Completion.IsCompleted;
+        StateHasChanged();
+        try
+        {
+            var _succeeded = await job.Completion.WaitAsync(_backupLifetime.Token);
+            _backupPending = false;
+            _backupFailed = !_succeeded;
+            RefreshAvailableArchive();
+            StateHasChanged();
+        }
+        catch (OperationCanceledException) when (_backupLifetime.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void RefreshAvailableArchive()
+    {
+        _availableArchive = _backupOwner is null ? null : BackupWorker.FindAvailableArchive(_backupOwner);
+        _downloadUrl = _availableArchive is null ? null : $"administration/database/download/{_availableArchive.Id}";
+    }
+
+    private async Task MonitorAvailableArchive()
+    {
+        try
+        {
+            using var _timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            while (await _timer.WaitForNextTickAsync(_backupLifetime.Token))
+            {
+                var _previousId = _availableArchive?.Id;
+                RefreshAvailableArchive();
+                if (_previousId != _availableArchive?.Id)
+                {
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_backupLifetime.IsCancellationRequested)
+        {
+        }
     }
 }
 
@@ -91,12 +200,33 @@
                 </div>
                 <section id="database-backup" aria-labelledby="database-backup-title">
                     <h2 id="database-backup-title">Database backup</h2>
-                    <p>Download a consistent snapshot of the SQLite database, including telemetry and stored configuration.</p>
+                    <p>Prepare a ZIP archive of the SQLite database in the background. Your browser will download it when it is ready.</p>
                     <p>This file contains sensitive data and security keys. Store it securely.</p>
-                    <form method="post" action="administration/database/download" data-enhance="false">
-                        <AntiforgeryToken />
-                        <button type="submit">Download SQLite database</button>
-                    </form>
+                    <button type="button" disabled="@_backupPending" @onclick="StartBackup">Prepare database ZIP</button>
+                    @if (_availableArchive is not null)
+                    {
+                        <p class="mt-3 mb-0">
+                            <a href="@_downloadUrl" download data-enhance-nav="false">Download existing archive: @_availableArchive.FileName</a>
+                        </p>
+                    }
+                    <div role="status" aria-live="polite">
+                        @if (_backupPending)
+                        {
+                            <p class="mt-3">Preparing your database ZIP in the background. You can continue using the application.</p>
+                        }
+                        else if (_downloadUrl is not null)
+                        {
+                            <p class="mt-3">Your database ZIP is ready. The download link is available for 15 minutes.</p>
+                        }
+                    </div>
+                    @if (_backupFailed)
+                    {
+                        <div class="alert alert-danger mt-3" role="alert">The database ZIP could not be prepared. Please try again.</div>
+                    }
+                    @if (_backupQueueFull)
+                    {
+                        <div class="alert alert-warning mt-3" role="alert">The backup queue is full. Please try again shortly.</div>
+                    }
                 </section>
             </main>
         </ChildContent>
