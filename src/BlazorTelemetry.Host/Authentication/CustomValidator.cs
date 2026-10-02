@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 
-namespace Blazor2fa;
+namespace BlazorTelemetry.Host.Authentication;
 
 public class CustomValidator : ComponentBase
 {

@@ -1,5 +1,6 @@
+﻿using BlazorTelemetry.Host.Authentication;
+
 using System.Security.Claims;
-using Blazor2fa;
 
 namespace BlazorTelemetry.Tests;
 
