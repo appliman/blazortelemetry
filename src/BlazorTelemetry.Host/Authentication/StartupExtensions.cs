@@ -1,12 +1,9 @@
-﻿using System.Threading.RateLimiting;
-
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace Blazor2fa;
+using System.Threading.RateLimiting;
+
+namespace BlazorTelemetry.Host.Authentication;
 
 public static class StartupExtensions
 {

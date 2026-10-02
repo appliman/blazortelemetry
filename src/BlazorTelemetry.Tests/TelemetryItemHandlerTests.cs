@@ -21,6 +21,70 @@ namespace BlazorTelemetry.Tests;
 public sealed partial class TelemetryCqrsTests
 {
     [Fact]
+    public async Task ImportPurchaseDuplicateProductErrorSurvivesProtobufAndSqliteRoundTrip()
+    {
+        var _timestamp = DateTimeOffset.Parse("2026-09-30T11:00:26.939Z");
+        var _requestBody = """
+            {"purchase":{"code":"60014778","supplierCode":"F0024","supplierName":"FAUVI BROD","companyName":"Rousseau Quincaillerie","isBalanced":true,"creationDate":"2026-09-10T08:12:11Z","items":[{"productCode":"CREASERICD101A501","supplierProductCode":"","quantity":"2","unitPurchasePriceWithoutTax":"2.95","productDesignation":"Sérigraphie Coeur et Dos de 101 à 501 pièces","barCode":""},{"productCode":"CREASERICD101A501","supplierProductCode":"","quantity":"2","unitPurchasePriceWithoutTax":"2.95","productDesignation":"Sérigraphie Coeur et Dos de 101 à 501 pièces","barCode":""},{"productCode":"CREASERICD101A501","supplierProductCode":"","quantity":"2","unitPurchasePriceWithoutTax":"2.95","productDesignation":"Sérigraphie Coeur et Dos de 101 à 501 pièces","barCode":""}]}}
+            """;
+        var _responseBody = """
+            {"status":3,"errors":{"exception":"An item with the same key has already been added. Key: CREASERICD101A501"},"warnings":[]}
+            """;
+        var _stackTrace = """
+            System.ArgumentException: An item with the same key has already been added. Key: CREASERICD101A501
+               at System.Collections.Generic.Dictionary`2.TryInsert(TKey key, TValue value, InsertionBehavior behavior)
+               at AuditStock.Handlers.Imports.ImportPurchaseRequestHandler.Handle(ImportPurchaseRequest request, CancellationToken cancellationToken) in /build/src/AuditStock.Core/Handlers/Imports/ImportPurchaseRequestHandler.cs:line 128
+            """;
+        var _body = $"API request POST /api/v15/imports/import-purchase from 78.24.32.55 returned 500 in 142ms. Content-Type: application/json; charset=utf-8. Request: {_requestBody}. Response: {_responseBody}";
+        var _record = new OpenTelemetry.Proto.Logs.V1.LogRecord
+        {
+            TimeUnixNano = (ulong)_timestamp.ToUnixTimeMilliseconds() * 1_000_000,
+            SeverityNumber = OpenTelemetry.Proto.Logs.V1.SeverityNumber.Error,
+            SeverityText = "Error",
+            Body = new OpenTelemetry.Proto.Common.V1.AnyValue { StringValue = _body }
+        };
+        _record.Attributes.Add(new OpenTelemetry.Proto.Common.V1.KeyValue
+        {
+            Key = "exception.stacktrace",
+            Value = new OpenTelemetry.Proto.Common.V1.AnyValue { StringValue = _stackTrace }
+        });
+        var _scope = new OpenTelemetry.Proto.Logs.V1.ScopeLogs
+        {
+            Scope = new OpenTelemetry.Proto.Common.V1.InstrumentationScope { Name = "AuditStock.AdminWebApp.Middlewares.ApiRequestLogMiddleware" }
+        };
+        _scope.LogRecords.Add(_record);
+        var _resource = new OpenTelemetry.Proto.Logs.V1.ResourceLogs();
+        _resource.ScopeLogs.Add(_scope);
+        var _payload = new OpenTelemetry.Proto.Collector.Logs.V1.ExportLogsServiceRequest();
+        _payload.ResourceLogs.Add(_resource);
+        using var _stream = new MemoryStream();
+        using (var _output = new Google.Protobuf.CodedOutputStream(_stream, leaveOpen: true))
+        {
+            _payload.WriteTo(_output);
+        }
+        _stream.Position = 0;
+        var _parsedPayload = OpenTelemetry.Proto.Collector.Logs.V1.ExportLogsServiceRequest.Parser.ParseFrom(_stream);
+        var _parser = new OtlpParser(new OtlpValueConverter(_telemetryOptions));
+        var _items = _parser.ParseLogs(_parsedPayload, "proxiwebpro");
+        var _result = await _mediator.Send(new StoreTelemetryBatchRequest(_items), CancellationToken.None);
+        Assert.False(_result.HasError);
+        Assert.Equal(1, _result.ChangeCount);
+
+        await using var _context = new TelemetryDbContext(_options);
+        var _stored = Assert.Single(await _context.TelemetryItems.AsNoTracking().ToListAsync());
+        Assert.Equal(_body, _stored.Body);
+        Assert.Equal(_timestamp, _stored.TimestampUtc);
+        Assert.Equal(17, _stored.SeverityNumber);
+        Assert.Equal("proxiwebpro", _stored.ServiceName);
+        using var _attributes = System.Text.Json.JsonDocument.Parse(_stored.AttributesJson);
+        Assert.Equal(_stackTrace, _attributes.RootElement.GetProperty("exception.stacktrace").GetString());
+        var _page = await _mediator.Query(new TelemetryQuery(TelemetryKind.Log, "proxiwebpro",
+            Search: "CREASERICD101A501", MinimumSeverityNumber: 17,
+            FromUtc: _timestamp.AddMinutes(-1), ToUtc: _timestamp.AddMinutes(1)), CancellationToken.None);
+        Assert.Equal(_stored.Id, Assert.Single(_page.Items).Id);
+    }
+
+    [Fact]
     public async Task QueryFailureReturnsBrokenRulesInsteadOfAnEmptyPage()
     {
         var missingDatabase = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-missing-{Guid.NewGuid():N}.db");

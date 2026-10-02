@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://json.schemastore.org/launchsettings.json",
     "profiles": {
       "http": {
@@ -6,6 +6,8 @@
         "dotnetRunMessages": true,
         "launchBrowser": true,
         "applicationUrl": "http://localhost:8080",
+        "launchUrl": "",
+        "hotReloadEnabled": true,
         "environmentVariables": {
           "ASPNETCORE_ENVIRONMENT": "Development"
         }

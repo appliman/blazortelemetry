@@ -1,0 +1,18 @@
+﻿<AuthorizeView>
+    <Authorized>
+        <div class="bt-sidebar-account">
+            <span class="bt-sidebar-account-item bt-sidebar-account-email" title="@context.User.Identity?.Name">
+                <span class="bt-sidebar-account-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.25"></circle><path d="M5.75 19c.6-3.25 2.68-5 6.25-5s5.65 1.75 6.25 5"></path></svg>
+                </span>
+                <span class="bt-sidebar-account-label">@context.User.Identity?.Name</span>
+            </span>
+            <a class="bt-sidebar-account-item" href="/b2fa/logout">
+                <span class="bt-sidebar-account-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M10 5H5v14h5m4-3 4-4-4-4m4 4H9"></path></svg>
+                </span>
+                <span class="bt-sidebar-account-label">Sign out</span>
+            </a>
+        </div>
+    </Authorized>
+</AuthorizeView>

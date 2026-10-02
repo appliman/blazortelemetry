@@ -1,7 +1,7 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
 
-namespace Blazor2fa;
+namespace BlazorTelemetry.Host.Authentication;
 
 public class TwoFactorAuthenticator
 {

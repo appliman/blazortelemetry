@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Claims;
 
-namespace Blazor2fa;
+namespace BlazorTelemetry.Host.Authentication;
 
 public sealed class Blazor2faAuthenticationTicketStore(TimeProvider timeProvider)
 {

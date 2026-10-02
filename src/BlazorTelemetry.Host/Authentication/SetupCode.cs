@@ -1,4 +1,4 @@
-﻿namespace Blazor2fa;
+﻿namespace BlazorTelemetry.Host.Authentication;
 
 internal class SetupCode
 {

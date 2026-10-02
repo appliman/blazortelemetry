@@ -1,4 +1,4 @@
-@page "/administration"
+﻿@page "/administration"
 @attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
 @rendermode InteractiveServer
 @using BlazorTelemetry.Core
@@ -35,57 +35,70 @@
 }
 
 <PageTitle>Administration · BlazorTelemetry</PageTitle>
-<main class="admin-page">
-    <header>
-        <a href="/">← Dashboard</a>
-        <h1>Administration</h1>
-        <p>Manage ingestion, MCP read access, and telemetry options.</p>
-        <nav class="admin-navigation" aria-label="Administration sections">
-            <a class="btn btn-outline-light" href="#api-keys">API keys</a>
-            <a class="btn btn-outline-light" href="#telemetry-options">Telemetry options</a>
-        </nav>
-    </header>
+<div class="telemetry-page">
+    <TelemetryShell ActiveView="admin">
+        <SidebarFooter>
+            <TelemetryAccount />
+        </SidebarFooter>
+        <ChildContent>
+            <main class="admin-page">
+                <header>
+                    <h1>Administration</h1>
+                    <p>Manage ingestion, MCP read access, and telemetry options.</p>
+                </header>
 
-    @if (!Options.RequireIngestionKey)
-    {
-        <div class="admin-message" role="status">
-            Ingestion key validation is disabled. Set BlazorTelemetry:RequireIngestionKey to true before relying on these keys.
-        </div>
-    }
-
-    <section id="api-keys">
-        <h2>API keys</h2>
-        <ApiKeyCreate OnCreated="LoadApplications" />
-        @if (_error is not null)
-        {
-            <div class="alert alert-danger" role="alert">@_error</div>
-        }
-        <div class="admin-table" role="table" aria-label="Ingestion keys">
-            @foreach (var application in _applications)
-            {
-                <div role="row">
-                    <span role="cell">
-                        <strong>@application.Name</strong>
-                        <small>@(application.IsMcpReadKey ? "MCP read access" : "OTLP ingestion")</small>
-                        <small>@application.KeyPrefix… · @(!application.IsActive ? "Revoked" : application.ExpiresUtc <= DateTimeOffset.UtcNow ? "Expired" : "Active")</small>
-                    </span>
-                    <span role="cell">Expires: @(application.ExpiresUtc?.ToLocalTime().ToString("g") ?? "Never")</span>
-                    <span role="cell">Last used: @(application.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</span>
-                    <span role="cell">Uses: @application.UsageCount</span>
-                    <button type="button" @onclick="() => SelectApplication(application.Id)">Manage</button>
-                </div>
-                @if (_selectedApplicationId == application.Id)
+                @if (!Options.RequireIngestionKey)
                 {
-                    <div class="selected-key">
-                        <button type="button" class="btn btn-outline-light" @onclick="() => _selectedApplicationId = null">Close key details</button>
-                        <ApiKeyDetail @key="application.Id" Id="application.Id" OnChanged="LoadApplications" />
+                    <div class="admin-message" role="status">
+                        Ingestion key validation is disabled. Set BlazorTelemetry:RequireIngestionKey to true before relying on these keys.
                     </div>
                 }
-            }
-        </div>
-    </section>
 
-    <div id="telemetry-options">
-        <AdministrationOptions />
-    </div>
-</main>
+                <section id="api-keys">
+                    <h2>API keys</h2>
+                    <ApiKeyCreate OnCreated="LoadApplications" />
+                    @if (_error is not null)
+                    {
+                        <div class="alert alert-danger" role="alert">@_error</div>
+                    }
+                    <div class="admin-table" role="table" aria-label="Ingestion keys">
+                        @foreach (var application in _applications)
+                        {
+                            <div role="row">
+                                <span role="cell">
+                                    <strong>@application.Name</strong>
+                                    <small>@(application.IsMcpReadKey ? "MCP read access" : "OTLP ingestion")</small>
+                                    <small>@application.KeyPrefix… · @(!application.IsActive ? "Revoked" : application.ExpiresUtc <= DateTimeOffset.UtcNow ? "Expired" : "Active")</small>
+                                </span>
+                                <span role="cell">Expires: @(application.ExpiresUtc?.ToLocalTime().ToString("g") ?? "Never")</span>
+                                <span role="cell">Last used: @(application.LastSeenUtc?.ToLocalTime().ToString("g") ?? "Never")</span>
+                                <span role="cell">Uses: @application.UsageCount</span>
+                                <button type="button" @onclick="() => SelectApplication(application.Id)">Manage</button>
+                            </div>
+                            @if (_selectedApplicationId == application.Id)
+                            {
+                                <div class="selected-key">
+                                    <button type="button" class="btn btn-outline-light" @onclick="() => _selectedApplicationId = null">Close key details</button>
+                                    <ApiKeyDetail @key="application.Id" Id="application.Id" OnChanged="LoadApplications" />
+                                </div>
+                            }
+                        }
+                    </div>
+                </section>
+
+                <div id="telemetry-options">
+                    <AdministrationOptions />
+                </div>
+                <section id="database-backup" aria-labelledby="database-backup-title">
+                    <h2 id="database-backup-title">Database backup</h2>
+                    <p>Download a consistent snapshot of the SQLite database, including telemetry and stored configuration.</p>
+                    <p>This file contains sensitive data and security keys. Store it securely.</p>
+                    <form method="post" action="administration/database/download" data-enhance="false">
+                        <AntiforgeryToken />
+                        <button type="submit">Download SQLite database</button>
+                    </form>
+                </section>
+            </main>
+        </ChildContent>
+    </TelemetryShell>
+</div>
