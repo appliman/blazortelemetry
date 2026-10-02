@@ -92,6 +92,8 @@ builder.Services.AddMcpServer()
 	.WithToolsFromAssembly(typeof(TelemetryMcpTools).Assembly);
 builder.Services.AddHealthChecks();
 builder.Services.AddSingleton<DatabaseBackupService>();
+builder.Services.AddSingleton<DatabaseBackupWorker>();
+builder.Services.AddHostedService(services => services.GetRequiredService<DatabaseBackupWorker>());
 
 builder.Services.AddSingleton<DataProtectionKeyRepository>();
 builder.Services.AddDataProtection().SetApplicationName("BlazorTelemetry.Host");
