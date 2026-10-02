@@ -32,22 +32,37 @@ internal sealed class PurgeRequestHandler(
     private async Task<int> Purge(DateTimeOffset rawBeforeUtc, DateTimeOffset metricsBeforeUtc, long maximumBytes, CancellationToken cancellationToken)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var purged = await context.TelemetryItems.Where(item => item.Kind != TelemetryKind.Metric && item.TimestampUtc < rawBeforeUtc).ExecuteDeleteAsync(cancellationToken);
-        purged += await context.TelemetryItems.Where(item => item.Kind == TelemetryKind.Metric && item.TimestampUtc < metricsBeforeUtc).ExecuteDeleteAsync(cancellationToken);
-
+        var purged = await context.TelemetryLogs.Where(_item => _item.TimestampUtc < rawBeforeUtc).ExecuteDeleteAsync(cancellationToken);
+        purged += await context.TelemetryTraces.Where(_item => _item.TimestampUtc < rawBeforeUtc).ExecuteDeleteAsync(cancellationToken);
+        purged += await context.TelemetryRequest.Where(_item => _item.TimestampUtc < rawBeforeUtc).ExecuteDeleteAsync(cancellationToken);
+        purged += await context.TelemetryMetrics.Where(_item => _item.TimestampUtc < metricsBeforeUtc).ExecuteDeleteAsync(cancellationToken);
+        await context.DeleteOrphanResources(cancellationToken);
         var connection = context.Database.GetDbConnection();
         await connection.OpenAsync(cancellationToken);
         while (await GetUsedDatabaseBytes(connection, cancellationToken) > maximumBytes)
         {
-            var removed = await context.Database.ExecuteSqlRawAsync(
-                "DELETE FROM TelemetryItems WHERE Id IN (SELECT Id FROM TelemetryItems ORDER BY TimestampUtc LIMIT 10000)",
-                cancellationToken);
-            if (removed == 0)
+            var oldest = await context.QueryTelemetry().OrderBy(_item => _item.TimestampUtc)
+                .ThenBy(_item => _item.Kind).ThenBy(_item => _item.Id)
+                .Select(_item => new { _item.Kind, _item.Id }).Take(10000).ToListAsync(cancellationToken);
+            if (oldest.Count == 0)
             {
                 break;
             }
-
-            purged += removed;
+            foreach (var group in oldest.GroupBy(_item => _item.Kind))
+            {
+                foreach (var chunk in group.Select(_item => _item.Id).Chunk(500))
+                {
+                    purged += group.Key switch
+                    {
+                        TelemetryKind.Log => await context.TelemetryLogs.Where(_item => chunk.Contains(_item.Id)).ExecuteDeleteAsync(cancellationToken),
+                        TelemetryKind.Trace => await context.TelemetryTraces.Where(_item => chunk.Contains(_item.Id)).ExecuteDeleteAsync(cancellationToken),
+                        TelemetryKind.Metric => await context.TelemetryMetrics.Where(_item => chunk.Contains(_item.Id)).ExecuteDeleteAsync(cancellationToken),
+                        TelemetryKind.Request => await context.TelemetryRequest.Where(_item => chunk.Contains(_item.Id)).ExecuteDeleteAsync(cancellationToken),
+                        _ => 0
+                    };
+                }
+            }
+            await context.DeleteOrphanResources(cancellationToken);
         }
 
         await context.Database.ExecuteSqlRawAsync("PRAGMA wal_checkpoint(PASSIVE);", cancellationToken);

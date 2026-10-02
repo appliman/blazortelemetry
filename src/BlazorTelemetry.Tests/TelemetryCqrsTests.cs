@@ -74,7 +74,6 @@ public sealed partial class TelemetryCqrsTests : IAsyncLifetime
             Unit = unit,
             ResourceAttributesJson = "{\"service.instance.id\":\"web-1\"}",
             AttributesJson = attributes,
-            DetailsJson = "{}"
         };
     }
 
@@ -87,13 +86,18 @@ public sealed partial class TelemetryCqrsTests : IAsyncLifetime
         IReadOnlyList<long> buckets,
         string attributes)
     {
-        var details = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            scope = "Microsoft.AspNetCore.Components",
-            data = new { count, sum, min = 0d, max = bounds.LastOrDefault(), bounds, buckets }
-        });
         var item = CreateMetric(timestamp, name, sum, "histogram", "s", attributes);
-        item.DetailsJson = details;
+        item.ScopeName = "Microsoft.AspNetCore.Components";
+        item.Count = count;
+        item.Sum = sum;
+        item.Minimum = 0;
+        item.Maximum = bounds.LastOrDefault();
+        item.Buckets = buckets.Select((_count, _ordinal) => new TelemetryMetricBucket
+        {
+            Ordinal = _ordinal,
+            Count = _count,
+            UpperBound = _ordinal < bounds.Count ? bounds[_ordinal] : null
+        }).ToList();
         return item;
     }
 

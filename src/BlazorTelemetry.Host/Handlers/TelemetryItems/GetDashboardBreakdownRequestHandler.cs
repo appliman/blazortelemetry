@@ -37,9 +37,9 @@ internal sealed class GetDashboardBreakdownRequestHandler(
         DateTimeOffset? toUtc = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var requests = context.TelemetryItems.AsNoTracking()
+        var requests = context.QueryTelemetry(TelemetryKind.Request).AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Request && item.TimestampUtc >= fromUtc);
-        var entityFrameworkMetrics = context.TelemetryItems.AsNoTracking()
+        var entityFrameworkMetrics = context.QueryTelemetry(TelemetryKind.Metric).AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Metric
                 && item.Name == "blazortelemetry.entity_framework.commands"
                 && item.NumericValue.HasValue);
@@ -72,7 +72,7 @@ internal sealed class GetDashboardBreakdownRequestHandler(
             .Select(group => new { Status = group.Key, Count = group.LongCount() })
             .ToListAsync(cancellationToken);
         var _window = entityFrameworkMetrics.Where(_item => _item.TimestampUtc >= fromUtc);
-        var _baselines = await MetricBaselines(context.TelemetryItems, entityFrameworkMetrics, _window, fromUtc)
+        var _baselines = await MetricBaselines(context.QueryTelemetry(TelemetryKind.Metric), entityFrameworkMetrics, _window, fromUtc)
             .Select(METRIC_PROJECTION)
             .ToListAsync(cancellationToken);
         var _previous = _baselines.GroupBy(MetricCounter.SeriesKey).ToDictionary(_group => _group.Key, _group => _group.MaxBy(_item => _item.TimestampUtc)!);

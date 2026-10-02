@@ -30,6 +30,10 @@ internal sealed class OtlpMetricsGrpcService(
         {
             throw new RpcException(new Status(StatusCode.ResourceExhausted, exception.Message));
         }
+        catch (OverflowException)
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "OTLP metrics value cannot be represented safely."));
+        }
         var result = await coordinator.Enqueue(items, mediator, context.CancellationToken);
         if (!result.Accepted)
         {

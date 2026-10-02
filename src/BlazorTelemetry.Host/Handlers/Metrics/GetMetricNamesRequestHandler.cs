@@ -32,7 +32,7 @@ internal sealed class GetMetricNamesRequestHandler(
     private async Task<IReadOnlyList<string>> GetMetricNames(DateTimeOffset fromUtc, DateTimeOffset toUtc, string? serviceName, CancellationToken cancellationToken)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var source = context.TelemetryItems.AsNoTracking()
+        var source = context.QueryTelemetry(TelemetryKind.Metric).AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Metric && item.TimestampUtc >= fromUtc && item.TimestampUtc <= toUtc);
         if (!string.IsNullOrWhiteSpace(serviceName))
         {
