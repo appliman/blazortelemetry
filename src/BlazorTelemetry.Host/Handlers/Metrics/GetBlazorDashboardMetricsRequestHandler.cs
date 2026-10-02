@@ -37,7 +37,7 @@ internal sealed class GetBlazorDashboardMetricsRequestHandler(
         DateTimeOffset? toUtc = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var source = context.TelemetryItems.AsNoTracking()
+        var source = context.QueryTelemetry(TelemetryKind.Metric).AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Metric
                 && item.TimestampUtc >= fromUtc
                 && BLAZOR_METRIC_NAMES.Contains(item.Name));
@@ -56,19 +56,9 @@ internal sealed class GetBlazorDashboardMetricsRequestHandler(
         var metrics = await source
             .OrderByDescending(item => item.TimestampUtc)
             .Take(maximumRows)
-            .Select(item => new TelemetryItem
-            {
-                TimestampUtc = item.TimestampUtc,
-                ServiceName = item.ServiceName,
-                Name = item.Name,
-                Unit = item.Unit,
-                MetricType = item.MetricType,
-                NumericValue = item.NumericValue,
-                ResourceAttributesJson = item.ResourceAttributesJson,
-                AttributesJson = item.AttributesJson,
-                DetailsJson = item.DetailsJson
-            })
+            .Select(METRIC_PROJECTION)
             .ToListAsync(cancellationToken);
+        await context.LoadTelemetryChildren(metrics, cancellationToken);
         metrics.Reverse();
         if (metrics.Count == 0)
         {

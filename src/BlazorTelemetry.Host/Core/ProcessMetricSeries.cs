@@ -21,7 +21,7 @@ public sealed record ProcessMetricSeries(
         var _written = new List<MetricSeriesPoint>();
         var _includesNonDiskIo = false;
         foreach (var _process in _items.Where(_item => _item.NumericValue is double _value && double.IsFinite(_value))
-            .GroupBy(_item => (_item.ServiceName, _item.ResourceAttributesJson)))
+            .GroupBy(_item => (_item.ServiceName, ResourceIdentity(_item))))
         {
             var _utilization = Select(_process, "process.cpu.utilization");
             if (_utilization.Count > 0)
@@ -114,4 +114,6 @@ public sealed record ProcessMetricSeries(
         "gby" or "gib" => _value * 1024 * 1024 * 1024,
         _ => _value
     };
+    private static string ResourceIdentity(TelemetryItem _item) => _item.ResourceId == 0
+        ? _item.ResourceAttributesJson : _item.ResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 }

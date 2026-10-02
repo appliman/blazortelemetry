@@ -35,22 +35,14 @@ internal sealed class QueryTelemetryRequestHandler(
         var take = Math.Clamp(query.Take, 1, options.MaximumQueryRows);
         var skip = Math.Max(0, query.Skip);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var source = query.RequireHttpRequestDetails
-            ? context.TelemetryItems.FromSqlRaw("""
-                SELECT * FROM "TelemetryItems"
-                WHERE "Body" IS NOT NULL
-                  AND TRIM("Body") NOT IN ('', '—', 'Blazor navigation')
-                  AND CASE WHEN json_valid("AttributesJson") THEN
-                      COALESCE(
-                          NULLIF(TRIM(json_extract("AttributesJson", '$."client.address"'), ' —'), ''),
-                          NULLIF(TRIM(json_extract("AttributesJson", '$."network.peer.address"'), ' —'), ''),
-                          NULLIF(TRIM(json_extract("AttributesJson", '$."http.client_ip"'), ' —'), ''),
-                          NULLIF(TRIM(json_extract("AttributesJson", '$."net.sock.peer.addr"'), ' —'), ''),
-                          NULLIF(TRIM(json_extract("AttributesJson", '$."net.peer.ip"'), ' —'), '')
-                      ) IS NOT NULL
-                  ELSE 0 END
-                """).AsNoTracking()
-            : context.TelemetryItems.AsNoTracking().AsQueryable();
+        var source = context.QueryTelemetry(query.Kind);
+        if (query.RequireHttpRequestDetails)
+        {
+            source = source.Where(_item => _item.Kind == TelemetryKind.Request
+                && _item.HttpMethod != null && _item.HttpMethod.Trim() != string.Empty
+                && _item.HttpMethod.Trim() != "—" && _item.HttpMethod != "Blazor navigation"
+                && _item.ClientAddress != null && _item.ClientAddress.Trim() != string.Empty && _item.ClientAddress.Trim() != "—");
+        }
 
         if (query.Kind.HasValue)
         {
@@ -122,15 +114,41 @@ internal sealed class QueryTelemetryRequestHandler(
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var search = query.Search.Trim();
-            source = source.Where(item => item.Name.Contains(search) || (item.Body != null && item.Body.Contains(search)) || item.AttributesJson.Contains(search));
+            var matchingRequestNumbers = Array.Empty<int>();
+            if ((!query.Kind.HasValue || query.Kind == TelemetryKind.Request)
+                && search.All(_character => _character is >= '0' and <= '9' or '-'))
+            {
+                // Materialize distinct scalar values before formatting: no numeric conversion in SQLite LINQ.
+                var numbers = await context.TelemetryRequest.Select(_item => _item.ClientPort)
+                    .Concat(context.TelemetryRequest.Select(_item => _item.ServerPort))
+                    .Concat(context.TelemetryRequest.Select(_item => _item.StatusCode))
+                    .Where(_number => _number.HasValue).Distinct().ToListAsync(cancellationToken);
+                matchingRequestNumbers = numbers.Where(_number => _number!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture).Contains(search, StringComparison.Ordinal))
+                    .Select(_number => _number!.Value).ToArray();
+            }
+            source = source.Where(item => item.Name.Contains(search) || (item.Body != null && item.Body.Contains(search)) || item.AttributesJson.Contains(search)
+                || (item.HttpMethod != null && item.HttpMethod.Contains(search))
+                || (item.Url != null && item.Url.Contains(search))
+                || (item.Route != null && item.Route.Contains(search))
+                || (item.ClientAddress != null && item.ClientAddress.Contains(search))
+                || (item.ServerAddress != null && item.ServerAddress.Contains(search))
+                || (item.UserAgent != null && item.UserAgent.Contains(search))
+                || (item.ProtocolVersion != null && item.ProtocolVersion.Contains(search))
+                || (item.UrlScheme != null && item.UrlScheme.Contains(search))
+                || (item.CircuitId != null && item.CircuitId.Contains(search))
+                || (item.Kind == TelemetryKind.Request
+                    && ((item.ClientPort.HasValue && EF.Parameter(matchingRequestNumbers).Contains(item.ClientPort.Value))
+                        || (item.ServerPort.HasValue && EF.Parameter(matchingRequestNumbers).Contains(item.ServerPort.Value))
+                        || (item.StatusCode.HasValue && EF.Parameter(matchingRequestNumbers).Contains(item.StatusCode.Value)))));
         }
 
         var total = await source.CountAsync(cancellationToken);
-        var items = await source.OrderByDescending(item => item.TimestampUtc)
+        var items = await source.OrderByDescending(item => item.TimestampUtc).ThenBy(item => item.Kind).ThenByDescending(item => item.Id)
             .Skip(skip)
             .Take(take)
             .ToListAsync(cancellationToken);
 
+        await context.LoadTelemetryChildren(items, cancellationToken);
         return new TelemetryPage(items, total, total > skip + items.Count);
     }
 }

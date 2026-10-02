@@ -20,7 +20,7 @@ namespace BlazorTelemetry.Tests;
 public sealed partial class TelemetryCqrsTests
 {
     [Fact]
-    public async Task MetricIndexMigrationPreservesExistingDataAndSupportsTimeRangeQueries()
+    public async Task TypedMigrationDropsLegacyTelemetryAndSupportsTimeRangeQueries()
     {
         var _path = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-upgrade-{Guid.NewGuid():N}.db");
         var _options = new DbContextOptionsBuilder<TelemetryDbContext>().UseSqlite($"Data Source={_path}").Options;
@@ -28,21 +28,21 @@ public sealed partial class TelemetryCqrsTests
         {
             await using var _context = new TelemetryDbContext(_options);
             await _context.GetService<IMigrator>().MigrateAsync("20260916144728_InitialTelemetrySchema");
-            _context.TelemetryItems.Add(CreateMetric(DateTimeOffset.UtcNow, "process.cpu.time", 10, "sum", "s"));
-            await _context.SaveChangesAsync();
-
+            await _context.Database.ExecuteSqlRawAsync("INSERT INTO TelemetryItems (Kind,TimestampUtc,ObservedUtc,ServiceName,Name,ResourceAttributesJson,AttributesJson,DetailsJson) VALUES (3,0,0,'web','legacy','{{}}','{{}}','{{}}')");
             await _context.Database.MigrateAsync();
-            Assert.Equal(10, (await _context.TelemetryItems.AsNoTracking().SingleAsync()).NumericValue);
+            Assert.Empty(await _context.TelemetryItems.ToListAsync());
+            await _context.StoreTelemetry([CreateMetric(DateTimeOffset.UtcNow, "process.cpu.time", 10, "sum", "s")], CancellationToken.None);
+            Assert.Equal(10, (await _context.TelemetryItems.SingleAsync()).NumericValue);
             await _context.Database.OpenConnectionAsync();
             using var _command = _context.Database.GetDbConnection().CreateCommand();
-            _command.CommandText = "EXPLAIN QUERY PLAN SELECT Id FROM TelemetryItems WHERE Kind = 3 AND Name = 'process.cpu.time' AND TimestampUtc >= 0 ORDER BY TimestampUtc DESC LIMIT 100";
+            _command.CommandText = "EXPLAIN QUERY PLAN SELECT Id FROM TelemetryMetrics WHERE Name = 'process.cpu.time' AND TimestampUtc >= 0 ORDER BY TimestampUtc DESC LIMIT 100";
             await using var _reader = await _command.ExecuteReaderAsync();
             var _plan = new List<string>();
             while (await _reader.ReadAsync())
             {
                 _plan.Add(_reader.GetString(3));
             }
-            Assert.Contains(_plan, _line => _line.Contains("IX_TelemetryItems_Kind_Name_TimestampUtc", StringComparison.Ordinal));
+            Assert.Contains(_plan, _line => _line.Contains("IX_TelemetryMetrics_Name_TimestampUtc", StringComparison.Ordinal));
             Assert.DoesNotContain(_plan, _line => _line.Contains("TEMP B-TREE", StringComparison.Ordinal));
         }
         finally

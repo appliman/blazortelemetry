@@ -12,7 +12,6 @@ namespace BlazorTelemetry.AspNetCore;
 
 internal sealed class OtlpParser(OtlpValueConverter valueConverter)
 {
-    private const int MAXIMUM_DETAILS_LENGTH = 16 * 1024;
     private const int MAXIMUM_ITEMS_PER_REQUEST = 5_000;
 
     public IReadOnlyList<TelemetryItem> ParseLogs(ExportLogsServiceRequest request, string? fallbackService)
@@ -22,7 +21,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         {
             var resource = valueConverter.ToDictionary(resourceLogs.Resource?.Attributes ?? []);
             var resourceJson = JsonSerializer.Serialize(resource);
-            var service = GetString(resource, "service.name") ?? fallbackService ?? "service-inconnu";
+            var service = GetString(resource, "service.name") ?? fallbackService ?? "unknown-service";
             foreach (var scopeLogs in resourceLogs.ScopeLogs)
             {
                 foreach (var record in scopeLogs.LogRecords)
@@ -44,13 +43,10 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         SpanId = ToHex(record.SpanId),
                         ResourceAttributesJson = resourceJson,
                         AttributesJson = valueConverter.ToJson(record.Attributes),
-                        DetailsJson = SerializeDetails(new
-                        {
-                            scope = scopeLogs.Scope?.Name,
-                            scopeVersion = scopeLogs.Scope?.Version,
-                            flags = record.Flags,
-                            droppedAttributes = record.DroppedAttributesCount
-                        })
+                        ScopeName = scopeLogs.Scope?.Name,
+                        ScopeVersion = scopeLogs.Scope?.Version,
+                        Flags = record.Flags,
+                        DroppedAttributesCount = record.DroppedAttributesCount
                     });
                 }
             }
@@ -66,7 +62,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         {
             var resource = valueConverter.ToDictionary(resourceSpans.Resource?.Attributes ?? []);
             var resourceJson = JsonSerializer.Serialize(resource);
-            var service = GetString(resource, "service.name") ?? fallbackService ?? "service-inconnu";
+            var service = GetString(resource, "service.name") ?? fallbackService ?? "unknown-service";
             foreach (var scopeSpans in resourceSpans.ScopeSpans)
             {
                 foreach (var span in scopeSpans.Spans)
@@ -95,23 +91,23 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         Body = span.Status?.Message,
                         ResourceAttributesJson = resourceJson,
                         AttributesJson = attributesJson,
-                        DetailsJson = SerializeDetails(new
+                        ScopeName = scopeSpans.Scope?.Name,
+                        ScopeVersion = scopeSpans.Scope?.Version,
+                        SpanKind = span.Kind.ToString(),
+                        Events = span.Events.Take(valueConverter.MaximumCollectionItems).Select((_event, _ordinal) => new TelemetryTraceEvent
                         {
-                            kind = span.Kind.ToString(),
-                            scope = scopeSpans.Scope?.Name,
-                            events = span.Events.Take(valueConverter.MaximumCollectionItems).Select(item => new
-                            {
-                                item.Name,
-                                timestampUtc = FromUnixNano(item.TimeUnixNano),
-                                attributes = valueConverter.ToDictionary(item.Attributes)
-                            }),
-                            links = span.Links.Take(valueConverter.MaximumCollectionItems).Select(link => new
-                            {
-                                traceId = ToHex(link.TraceId),
-                                spanId = ToHex(link.SpanId),
-                                attributes = valueConverter.ToDictionary(link.Attributes)
-                            })
-                        }),
+                            Ordinal = _ordinal,
+                            Name = _event.Name,
+                            TimestampUtc = FromUnixNano(_event.TimeUnixNano),
+                            AttributesJson = valueConverter.ToJson(_event.Attributes)
+                        }).ToList(),
+                        Links = span.Links.Take(valueConverter.MaximumCollectionItems).Select((_link, _ordinal) => new TelemetryTraceLink
+                        {
+                            Ordinal = _ordinal,
+                            TraceId = ToHex(_link.TraceId),
+                            SpanId = ToHex(_link.SpanId),
+                            AttributesJson = valueConverter.ToJson(_link.Attributes)
+                        }).ToList(),
                         Fingerprint = Hash($"trace:{traceId}:{spanId}")
                     });
 
@@ -134,11 +130,10 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             StatusCode = GetInt(attributes, "http.response.status_code") ?? GetInt(attributes, "http.status_code"),
                             ResourceAttributesJson = resourceJson,
                             AttributesJson = attributesJson,
-                            DetailsJson = SerializeDetails(new
-                            {
-                                kind = span.Kind.ToString(),
-                                source = "OTLP server span"
-                            }),
+                            ScopeName = scopeSpans.Scope?.Name,
+                            ScopeVersion = scopeSpans.Scope?.Version,
+                            SpanKind = span.Kind.ToString(),
+                            Source = "OTLP server span",
                             Fingerprint = Hash($"request:{traceId}:{spanId}")
                         });
                     }
@@ -156,12 +151,12 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         {
             var resource = valueConverter.ToDictionary(resourceMetrics.Resource?.Attributes ?? []);
             var resourceJson = JsonSerializer.Serialize(resource);
-            var service = GetString(resource, "service.name") ?? fallbackService ?? "service-inconnu";
+            var service = GetString(resource, "service.name") ?? fallbackService ?? "unknown-service";
             foreach (var scopeMetrics in resourceMetrics.ScopeMetrics)
             {
                 foreach (var metric in scopeMetrics.Metrics)
                 {
-                    ParseMetric(result, metric, service, resource, resourceJson, scopeMetrics.Scope?.Name);
+                    ParseMetric(result, metric, service, resource, resourceJson, scopeMetrics.Scope?.Name, scopeMetrics.Scope?.Version);
                 }
             }
         }
@@ -169,158 +164,168 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
         return result;
     }
 
-    private void ParseMetric(
-        List<TelemetryItem> result,
-        Metric metric,
-        string service,
-        Dictionary<string, object?> resource,
-        string resourceJson,
-        string? scope)
+    private void ParseMetric(List<TelemetryItem> _result, Metric _metric, string _service,
+        Dictionary<string, object?> _resource, string _resourceJson, string? _scope, string? _scopeVersion)
     {
-        switch (metric.DataCase)
+        switch (_metric.DataCase)
         {
             case Metric.DataOneofCase.Gauge:
-                foreach (var point in metric.Gauge.DataPoints)
+            {
+                foreach (var _point in _metric.Gauge.DataPoints)
                 {
-                    AddNumberPoint(result, metric, point, "gauge", service, resource, resourceJson, scope, null);
+                    var _item = CreateMetric(_metric, "gauge", _service, _resource, _resourceJson, _scope, _scopeVersion, _point.TimeUnixNano, _point.Attributes);
+                    _item.NumericValue = Number(_point);
+                    _item.StartTimeUtc = StartTime(_point.StartTimeUnixNano);
+                    _item.Exemplars = Exemplars(_point.Exemplars);
+                    AddMetric(_result, _item);
                 }
                 break;
+            }
             case Metric.DataOneofCase.Sum:
-                foreach (var point in metric.Sum.DataPoints)
+            {
+                foreach (var _point in _metric.Sum.DataPoints)
                 {
-                    AddNumberPoint(result, metric, point, "sum", service, resource, resourceJson, scope, new
-                    {
-                        aggregationTemporality = metric.Sum.AggregationTemporality.ToString(),
-                        startTimeUnixNano = point.StartTimeUnixNano,
-                        metric.Sum.IsMonotonic,
-                        exemplars = SerializeExemplars(point.Exemplars)
-                    });
+                    var _item = CreateMetric(_metric, "sum", _service, _resource, _resourceJson, _scope, _scopeVersion, _point.TimeUnixNano, _point.Attributes);
+                    _item.NumericValue = Number(_point);
+                    _item.StartTimeUtc = StartTime(_point.StartTimeUnixNano);
+                    _item.AggregationTemporality = _metric.Sum.AggregationTemporality.ToString();
+                    _item.IsMonotonic = _metric.Sum.IsMonotonic;
+                    _item.Exemplars = Exemplars(_point.Exemplars);
+                    AddMetric(_result, _item);
                 }
                 break;
+            }
             case Metric.DataOneofCase.Histogram:
-                foreach (var point in metric.Histogram.DataPoints)
+            {
+                foreach (var _point in _metric.Histogram.DataPoints)
                 {
-                    AddMetric(result, metric, "histogram", service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes,
-                        point.HasSum ? point.Sum : point.Count,
-                        new
-                        {
-                            point.Count,
-                            sum = point.HasSum ? (double?)point.Sum : null,
-                            min = point.HasMin ? (double?)point.Min : null,
-                            max = point.HasMax ? (double?)point.Max : null,
-                            bounds = point.ExplicitBounds.Take(valueConverter.MaximumCollectionItems).ToArray(),
-                            buckets = point.BucketCounts.Take(valueConverter.MaximumCollectionItems).ToArray(),
-                            aggregationTemporality = metric.Histogram.AggregationTemporality.ToString(),
-                            exemplars = SerializeExemplars(point.Exemplars)
-                        });
+                    var _item = CreateMetric(_metric, "histogram", _service, _resource, _resourceJson, _scope, _scopeVersion, _point.TimeUnixNano, _point.Attributes);
+                    _item.StartTimeUtc = StartTime(_point.StartTimeUnixNano);
+                    _item.Count = checked((long)_point.Count);
+                    _item.Sum = _point.HasSum ? _point.Sum : null;
+                    _item.Minimum = _point.HasMin ? _point.Min : null;
+                    _item.Maximum = _point.HasMax ? _point.Max : null;
+                    _item.NumericValue = _item.Sum ?? _item.Count;
+                    _item.AggregationTemporality = _metric.Histogram.AggregationTemporality.ToString();
+                    _item.Buckets = _point.BucketCounts.Take(valueConverter.MaximumCollectionItems).Select((_count, _ordinal) => new TelemetryMetricBucket
+                    {
+                        Ordinal = _ordinal,
+                        Count = checked((long)_count),
+                        UpperBound = _ordinal < _point.ExplicitBounds.Count ? _point.ExplicitBounds[_ordinal] : null
+                    }).ToList();
+                    _item.Exemplars = Exemplars(_point.Exemplars);
+                    AddMetric(_result, _item);
                 }
                 break;
+            }
             case Metric.DataOneofCase.ExponentialHistogram:
-                foreach (var point in metric.ExponentialHistogram.DataPoints)
+            {
+                foreach (var _point in _metric.ExponentialHistogram.DataPoints)
                 {
-                    AddMetric(result, metric, "exponential-histogram", service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes,
-                        point.HasSum ? point.Sum : point.Count,
-                        new
-                        {
-                            point.Count,
-                            sum = point.HasSum ? (double?)point.Sum : null,
-                            min = point.HasMin ? (double?)point.Min : null,
-                            max = point.HasMax ? (double?)point.Max : null,
-                            point.Scale,
-                            point.ZeroCount,
-                            positive = SerializeBuckets(point.Positive),
-                            negative = SerializeBuckets(point.Negative),
-                            aggregationTemporality = metric.ExponentialHistogram.AggregationTemporality.ToString(),
-                            exemplars = SerializeExemplars(point.Exemplars)
-                        });
+                    var _item = CreateMetric(_metric, "exponential-histogram", _service, _resource, _resourceJson, _scope, _scopeVersion, _point.TimeUnixNano, _point.Attributes);
+                    _item.StartTimeUtc = StartTime(_point.StartTimeUnixNano);
+                    _item.Count = checked((long)_point.Count);
+                    _item.Sum = _point.HasSum ? _point.Sum : null;
+                    _item.Minimum = _point.HasMin ? _point.Min : null;
+                    _item.Maximum = _point.HasMax ? _point.Max : null;
+                    _item.NumericValue = _item.Sum ?? _item.Count;
+                    _item.Scale = _point.Scale;
+                    _item.ZeroCount = checked((long)_point.ZeroCount);
+                    _item.PositiveOffset = _point.Positive?.Offset;
+                    _item.NegativeOffset = _point.Negative?.Offset;
+                    _item.AggregationTemporality = _metric.ExponentialHistogram.AggregationTemporality.ToString();
+                    _item.Buckets = ExponentialBuckets(_point.Positive, 1).Concat(ExponentialBuckets(_point.Negative, -1)).ToList();
+                    _item.Exemplars = Exemplars(_point.Exemplars);
+                    AddMetric(_result, _item);
                 }
                 break;
+            }
             case Metric.DataOneofCase.Summary:
-                foreach (var point in metric.Summary.DataPoints)
+            {
+                foreach (var _point in _metric.Summary.DataPoints)
                 {
-                    AddMetric(result, metric, "summary", service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes,
-                        point.Sum,
-                        new
-                        {
-                            point.Count,
-                            point.Sum,
-                            quantiles = point.QuantileValues.Take(valueConverter.MaximumCollectionItems).Select(value => new { value.Quantile, value.Value })
-                        });
+                    var _item = CreateMetric(_metric, "summary", _service, _resource, _resourceJson, _scope, _scopeVersion, _point.TimeUnixNano, _point.Attributes);
+                    _item.StartTimeUtc = StartTime(_point.StartTimeUnixNano);
+                    _item.Count = checked((long)_point.Count);
+                    _item.Sum = _point.Sum;
+                    _item.NumericValue = _point.Sum;
+                    _item.Quantiles = _point.QuantileValues.Take(valueConverter.MaximumCollectionItems).Select((_value, _ordinal) => new TelemetryMetricQuantile
+                    {
+                        Ordinal = _ordinal,
+                        Quantile = _value.Quantile,
+                        Value = _value.Value
+                    }).ToList();
+                    AddMetric(_result, _item);
                 }
                 break;
+            }
         }
     }
 
-    private void AddNumberPoint(
-        List<TelemetryItem> result,
-        Metric metric,
-        NumberDataPoint point,
-        string type,
-        string service,
-        Dictionary<string, object?> resource,
-        string resourceJson,
-        string? scope,
-        object? details)
+    private TelemetryItem CreateMetric(Metric _metric, string _type, string _service, Dictionary<string, object?> _resource,
+        string _resourceJson, string? _scope, string? _scopeVersion, ulong _timestamp, IEnumerable<KeyValue> _attributes)
     {
-        var value = point.ValueCase == NumberDataPoint.ValueOneofCase.AsDouble ? point.AsDouble : point.AsInt;
-        AddMetric(result, metric, type, service, resource, resourceJson, scope, point.TimeUnixNano, point.Attributes, value,
-            details ?? new { exemplars = SerializeExemplars(point.Exemplars) });
-    }
-
-    private void AddMetric(
-        List<TelemetryItem> result,
-        Metric metric,
-        string type,
-        string service,
-        Dictionary<string, object?> resource,
-        string resourceJson,
-        string? scope,
-        ulong timestampNano,
-        IEnumerable<KeyValue> attributes,
-        double value,
-        object details)
-    {
-        var timestamp = FromUnixNano(timestampNano);
-        var attributesJson = valueConverter.ToJson(attributes);
-        AddItem(result, new TelemetryItem
+        return new TelemetryItem
         {
             Kind = TelemetryKind.Metric,
-            TimestampUtc = timestamp,
+            TimestampUtc = FromUnixNano(_timestamp),
             ObservedUtc = DateTimeOffset.UtcNow,
-            ServiceName = service,
-            ServiceVersion = GetString(resource, "service.version"),
-            Environment = GetString(resource, "deployment.environment.name") ?? GetString(resource, "deployment.environment"),
-            Name = metric.Name,
-            Body = metric.Description,
-            Unit = metric.Unit,
-            MetricType = type,
-            NumericValue = value,
-            ResourceAttributesJson = resourceJson,
-            AttributesJson = attributesJson,
-            DetailsJson = SerializeDetails(new { scope, data = details }),
-            Fingerprint = Hash($"metric:{service}:{resourceJson}:{scope}:{metric.Name}:{timestampNano}:{attributesJson}:{value}")
-        });
-    }
-
-    private object SerializeExemplars(IEnumerable<Exemplar> exemplars)
-    {
-        return exemplars.Take(valueConverter.MaximumCollectionItems).Select(exemplar => new
-        {
-            timestampUtc = FromUnixNano(exemplar.TimeUnixNano),
-            traceId = ToHex(exemplar.TraceId),
-            spanId = ToHex(exemplar.SpanId),
-            value = exemplar.ValueCase == Exemplar.ValueOneofCase.AsDouble ? exemplar.AsDouble : exemplar.AsInt,
-            attributes = valueConverter.ToDictionary(exemplar.FilteredAttributes)
-        }).ToArray();
-    }
-
-    private object SerializeBuckets(ExponentialHistogramDataPoint.Types.Buckets buckets)
-    {
-        return new
-        {
-            buckets.Offset,
-            bucketCounts = buckets.BucketCounts.Take(valueConverter.MaximumCollectionItems).ToArray()
+            ServiceName = _service,
+            ServiceVersion = GetString(_resource, "service.version"),
+            Environment = GetString(_resource, "deployment.environment.name") ?? GetString(_resource, "deployment.environment"),
+            Name = _metric.Name,
+            Body = _metric.Description,
+            Unit = _metric.Unit,
+            MetricType = _type,
+            ScopeName = _scope,
+            ScopeVersion = _scopeVersion,
+            ResourceAttributesJson = _resourceJson,
+            AttributesJson = valueConverter.ToJson(_attributes),
+            Fingerprint = _timestamp.ToString(System.Globalization.CultureInfo.InvariantCulture)
         };
+    }
+
+    private List<TelemetryMetricExemplar> Exemplars(IEnumerable<Exemplar> _exemplars)
+    {
+        return _exemplars.Take(valueConverter.MaximumCollectionItems).Select((_exemplar, _ordinal) => new TelemetryMetricExemplar
+        {
+            Ordinal = _ordinal,
+            TimestampUtc = FromUnixNano(_exemplar.TimeUnixNano),
+            TraceId = ToHex(_exemplar.TraceId),
+            SpanId = ToHex(_exemplar.SpanId),
+            Value = _exemplar.ValueCase == Exemplar.ValueOneofCase.AsDouble ? _exemplar.AsDouble : ExactInteger(_exemplar.AsInt),
+            AttributesJson = valueConverter.ToJson(_exemplar.FilteredAttributes)
+        }).ToList();
+    }
+
+    private IEnumerable<TelemetryMetricBucket> ExponentialBuckets(ExponentialHistogramDataPoint.Types.Buckets? _buckets, int _group)
+    {
+        return _buckets?.BucketCounts.Take(valueConverter.MaximumCollectionItems).Select((_count, _ordinal) => new TelemetryMetricBucket
+        {
+            Group = _group,
+            Ordinal = _ordinal,
+            Count = checked((long)_count)
+        }) ?? [];
+    }
+
+    private static DateTimeOffset? StartTime(ulong _timestamp) => _timestamp == 0 ? null : FromUnixNano(_timestamp);
+
+    private static double Number(NumberDataPoint _point) => _point.ValueCase == NumberDataPoint.ValueOneofCase.AsDouble ? _point.AsDouble : ExactInteger(_point.AsInt);
+
+    private static double ExactInteger(long _value)
+    {
+        var _converted = (double)_value;
+        if (new System.Numerics.BigInteger(_converted) != _value)
+        {
+            throw new OverflowException("OTLP integer cannot be represented safely as a metric value.");
+        }
+        return _converted;
+    }
+
+    private static void AddMetric(List<TelemetryItem> _result, TelemetryItem _item)
+    {
+        _item.Fingerprint = Hash(FormattableString.Invariant($"metric:{_item.ServiceName}:{TelemetryNormalization.Canonical(_item.ResourceAttributesJson)}:{_item.ScopeName}:{_item.Name}:{_item.Fingerprint}:{TelemetryNormalization.Canonical(_item.AttributesJson)}:{_item.NumericValue}"));
+        AddItem(_result, _item);
     }
 
     private string? ValueToText(AnyValue? value)
@@ -405,14 +410,9 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
             throw new OtlpBatchTooLargeException(MAXIMUM_ITEMS_PER_REQUEST);
         }
 
+        TelemetryNormalization.Validate(item);
+        TelemetryCollectionLimits.Apply(item);
         result.Add(item);
     }
 
-    private static string SerializeDetails(object value)
-    {
-        var serialized = JsonSerializer.Serialize(value);
-        return serialized.Length <= MAXIMUM_DETAILS_LENGTH
-            ? serialized
-            : "{\"truncated\":true}";
-    }
 }

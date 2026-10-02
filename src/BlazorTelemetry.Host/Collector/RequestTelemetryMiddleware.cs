@@ -32,11 +32,16 @@ public sealed class RequestTelemetryMiddleware(RequestDelegate next, ILogger<Req
             Body = context.Request.Method,
             TraceId = _requestId,
             SpanId = _activity?.SpanId.ToHexString(),
-            AttributesJson = JsonSerializer.Serialize(new Dictionary<string, string?>
-            {
-                ["client.address"] = context.Connection.RemoteIpAddress?.ToString(),
-                ["user_agent.original"] = context.Request.Headers.UserAgent.ToString()
-            })
+            HttpMethod = context.Request.Method,
+            Url = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{_path}",
+            UrlScheme = context.Request.Scheme,
+            ClientAddress = context.Connection.RemoteIpAddress?.ToString(),
+            ClientPort = context.Connection.RemotePort,
+            ServerAddress = context.Request.Host.Host,
+            ServerPort = context.Request.Host.Port,
+            UserAgent = context.Request.Headers.UserAgent.ToString(),
+            ProtocolVersion = context.Request.Protocol,
+            Source = "HTTP middleware"
         };
         try
         {

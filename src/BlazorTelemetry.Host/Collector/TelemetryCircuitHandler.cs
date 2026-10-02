@@ -60,12 +60,11 @@ public sealed class TelemetryCircuitHandler(
                 Name = _uri.GetLeftPart(UriPartial.Path),
                 Body = "Blazor navigation",
                 TraceId = Guid.NewGuid().ToString("N"),
-                AttributesJson = JsonSerializer.Serialize(new Dictionary<string, string?>
-                {
-                    ["client.address"] = _ip,
-                    ["user_agent.original"] = _userAgent
-                }),
-                DetailsJson = JsonSerializer.Serialize(new Dictionary<string, string?> { ["blazor.circuit.id"] = _circuitId })
+                ClientAddress = _ip,
+                UserAgent = _userAgent,
+                CircuitId = _circuitId,
+                Url = _uri.GetLeftPart(UriPartial.Path),
+                Source = "Blazor navigation"
             }], cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

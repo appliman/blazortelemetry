@@ -36,7 +36,7 @@ internal sealed class GetErrorCountsByServiceRequestHandler(
         CancellationToken cancellationToken)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var source = context.TelemetryItems.AsNoTracking()
+        var source = context.QueryTelemetry(TelemetryKind.Log).AsNoTracking()
             .Where(item => item.Kind == TelemetryKind.Log && item.TimestampUtc >= fromUtc && (item.SeverityNumber ?? 0) >= 17);
 
         if (!string.IsNullOrWhiteSpace(serviceName))

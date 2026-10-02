@@ -31,7 +31,7 @@ public sealed partial class TelemetryCqrsTests
         foreach (var _seconds in new[] { 10, 20 })
         {
             var _delta = ProcessMetricSeriesTests.Item("blazortelemetry.entity_framework.commands", _from.AddSeconds(_seconds), 4, "b", "{\"db.operation.type\":\"insert\"}");
-            _delta.DetailsJson = "{\"data\":{\"aggregationTemporality\":\"Delta\"}}";
+            _delta.AggregationTemporality = "Delta";
             _items.Add(_delta);
         }
         await _repository.Store(_items, CancellationToken.None);
@@ -68,8 +68,10 @@ public sealed partial class TelemetryCqrsTests
         Assert.Equal("POST", _item.Body);
         Assert.Equal(201, _item.StatusCode);
         Assert.True(_item.DurationMs >= 0);
-        Assert.Contains("127.0.0.1", _item.AttributesJson);
-        Assert.Contains("Request test agent", _item.AttributesJson);
+        Assert.Equal("127.0.0.1", _item.ClientAddress);
+        Assert.DoesNotContain("client.address", _item.AttributesJson);
+        Assert.Equal("Request test agent", _item.UserAgent);
+        Assert.DoesNotContain("user_agent.original", _item.AttributesJson);
     }
 
     [Fact]

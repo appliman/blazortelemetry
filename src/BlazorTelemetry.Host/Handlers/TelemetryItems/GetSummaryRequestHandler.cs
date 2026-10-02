@@ -32,20 +32,25 @@ internal sealed class GetSummaryRequestHandler(
     private async Task<TelemetrySummary> GetSummary(DateTimeOffset fromUtc, CancellationToken cancellationToken, DateTimeOffset? toUtc = null, string? serviceName = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var source = context.TelemetryItems.AsNoTracking().Where(item => item.TimestampUtc >= fromUtc);
-        if (toUtc.HasValue)
+        IQueryable<TelemetryItem> Source(TelemetryKind? _kind = null)
         {
-            source = source.Where(_item => _item.TimestampUtc <= toUtc.Value);
+            var _source = context.QueryTelemetry(_kind).Where(_item => _item.TimestampUtc >= fromUtc);
+            if (toUtc.HasValue)
+            {
+                _source = _source.Where(_item => _item.TimestampUtc <= toUtc.Value);
+            }
+            if (!string.IsNullOrWhiteSpace(serviceName))
+            {
+                _source = _source.Where(_item => _item.ServiceName == serviceName);
+            }
+            return _source;
         }
-        if (!string.IsNullOrWhiteSpace(serviceName))
-        {
-            source = source.Where(_item => _item.ServiceName == serviceName);
-        }
-        var logs = await source.LongCountAsync(item => item.Kind == TelemetryKind.Log, cancellationToken);
-        var traces = await source.LongCountAsync(item => item.Kind == TelemetryKind.Trace, cancellationToken);
-        var metrics = await source.LongCountAsync(item => item.Kind == TelemetryKind.Metric, cancellationToken);
+        var source = Source();
+        var logs = await Source(TelemetryKind.Log).LongCountAsync(cancellationToken);
+        var traces = await Source(TelemetryKind.Trace).LongCountAsync(cancellationToken);
+        var metrics = await Source(TelemetryKind.Metric).LongCountAsync(cancellationToken);
         var errors = await source.LongCountAsync(item => item.StatusCode == 2 || (item.SeverityNumber ?? 0) >= 17, cancellationToken);
-        var durations = await source.Where(item => item.Kind == TelemetryKind.Trace && item.DurationMs.HasValue)
+        var durations = await Source(TelemetryKind.Trace).Where(item => item.DurationMs.HasValue)
             .OrderBy(item => item.DurationMs)
             .Select(item => item.DurationMs!.Value)
             .Take(10_000)
