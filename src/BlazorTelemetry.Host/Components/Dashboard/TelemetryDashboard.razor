@@ -9,7 +9,14 @@
     [Parameter]
     public RenderFragment? SidebarFooter { get; set; }
 
-    private static readonly string? _assemblyVersion = typeof(TelemetryDashboard).Assembly.GetName().Version?.ToString(4);
+    [Parameter]
+    public string? InitialView { get; set; }
+
+    protected override void OnInitialized()
+    {
+        _activeView = InitialView is "requests" or "logs" or "traces" or "metrics" or "alerts" ? InitialView : "dashboards";
+    }
+
     private readonly CancellationTokenSource _lifetime = new();
     private Task? _refreshTask;
     private bool _refreshRequested;
@@ -557,8 +564,8 @@
         "5xx" => (500, 599, true),
         _ => (null, null, null)
     };
-    private string ViewTitle() => _activeView switch { "requests" => "Requests", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboard", "alerts" => "Alert center", _ => "Administration" };
-    private string ViewSubtitle() => _activeView switch { "requests" => "Live HTTP requests and recent route activity · selected period", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Collection, storage, and access control" };
+    private string ViewTitle() => _activeView switch { "requests" => "Requests", "logs" => "Structured logs", "traces" => "Distributed traces", "metrics" => "Metrics", "dashboards" => "Dashboard", "alerts" => "Alert center", _ => "Dashboard" };
+    private string ViewSubtitle() => _activeView switch { "requests" => "Live HTTP requests and recent route activity · selected period", "logs" => "Messages, attributes, and correlation context", "traces" => "From entry point to dependencies, span by span", "metrics" => "Instruments, dimensions, and trends over time", "dashboards" => "Operational views shared by the team", "alerts" => "Rules, incidents, and notifications", _ => "Operational views shared by the team" };
 
     private static string RequestAttribute(string json, string key)
     {
@@ -629,33 +636,7 @@
     }
 }
 
-<section class="bt-shell" aria-label="BlazorTelemetry">
-    <aside class="bt-sidebar">
-        <div class="bt-brand">
-            <span class="bt-brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="bt-brand-text">
-                <span><strong>Blazor</strong>Telemetry</span>
-                <small class="bt-brand-version">@_assemblyVersion</small>
-            </span>
-        </div>
-        <nav aria-label="Telemetry navigation">
-            <button class="@(_activeView == "dashboards" ? "active" : null)" @onclick='() => SelectView("dashboards")'><span class="bt-nav-icon" aria-hidden="true">dashboard</span>Dashboard</button>
-            <button class="@(_activeView == "requests" ? "active" : null)" @onclick='() => SelectView("requests")'><span class="bt-nav-icon" aria-hidden="true">http</span>Requests</button>
-            <button class="@(_activeView == "logs" ? "active" : null)" @onclick='() => SelectView("logs")'><span class="bt-nav-icon" aria-hidden="true">description</span>Logs</button>
-            <button class="@(_activeView == "traces" ? "active" : null)" @onclick='() => SelectView("traces")'><span class="bt-nav-icon" aria-hidden="true">account_tree</span>Traces</button>
-            <button class="@(_activeView == "metrics" ? "active" : null)" @onclick='() => SelectView("metrics")'><span class="bt-nav-icon" aria-hidden="true">query_stats</span>Metrics</button>
-            <button class="@(_activeView == "alerts" ? "active" : null)" @onclick='() => SelectView("alerts")'><span class="bt-nav-icon" aria-hidden="true">notifications</span>Alerts @if (_summary.ActiveIncidents > 0) { <b>@_summary.ActiveIncidents</b> }</button>
-            <button class="@(_activeView == "admin" ? "active" : null)" @onclick='() => SelectView("admin")'><span class="bt-nav-icon" aria-hidden="true">admin_panel_settings</span>Administration</button>
-        </nav>
-        @if (SidebarFooter is not null)
-        {
-            <div class="bt-sidebar-footer">
-                @SidebarFooter
-            </div>
-        }
-        <div class="bt-collector-state"><span></span><div><strong>Collector active</strong><small>OTLP · HTTP/protobuf</small></div></div>
-    </aside>
-
+<TelemetryShell ActiveView="@_activeView" ActiveIncidents="@_summary.ActiveIncidents" ViewChanged="SelectView" SidebarFooter="SidebarFooter">
     <main class="bt-main">
         <header class="bt-toolbar">
             <div>
@@ -869,14 +850,6 @@
         {
             <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" FromUtc="_fromUtc" ToUtc="_toUtc" />
         }
-        else
-        {
-            <section class="bt-admin-grid">
-                <article><h2>Collection</h2><dl><div><dt>Protocol</dt><dd>OTLP gRPC · HTTP/protobuf</dd></div><div><dt>Endpoints</dt><dd><code>:4317 · /v1/logs · /v1/traces · /v1/metrics</code></dd></div><div><dt>Request limit</dt><dd>@(Options.MaximumRequestBytes / 1024 / 1024) MiB</dd></div></dl></article>
-                <article><h2>Storage</h2><dl><div><dt>Raw retention</dt><dd>@Options.RawRetentionDays days</dd></div><div><dt>Metrics</dt><dd>@Options.MetricRetentionDays days</dd></div><div><dt>SQLite budget</dt><dd>@(Options.MaximumDatabaseBytes / 1024 / 1024 / 1024) GiB</dd></div></dl></article>
-                <article><h2>Security</h2><dl><div><dt>Ingestion key</dt><dd>@(Options.RequireIngestionKey ? "Required" : "Disabled")</dd></div><div><dt>Sensitive attributes</dt><dd>@Options.SensitiveAttributePatterns.Length masked patterns</dd></div><div><dt>Access</dt><dd>Reader / Administrator</dd></div></dl></article>
-            </section>
-        }
     </main>
 
     @if (_selectedSpan is { } _span)
@@ -1013,4 +986,4 @@
             </aside>
         </div>
     }
-</section>
+</TelemetryShell>

@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace Blazor2fa;
+namespace BlazorTelemetry.Host.Authentication;
 
 public class LoginForm
 {

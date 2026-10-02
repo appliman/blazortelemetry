@@ -1,0 +1,68 @@
+@inject NavigationManager Navigation
+
+@code {
+    [Parameter]
+    public string ActiveView { get; set; } = "dashboards";
+
+    [Parameter]
+    public int ActiveIncidents { get; set; }
+
+    [Parameter]
+    public EventCallback<string> ViewChanged { get; set; }
+
+    [Parameter]
+    public RenderFragment? SidebarFooter { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    private static readonly string? _assemblyVersion = typeof(TelemetryShell).Assembly.GetName().Version?.ToString(4);
+
+    private async Task SelectView(string _view)
+    {
+        if (_view == "admin")
+        {
+            Navigation.NavigateTo("/administration");
+        }
+        else if (ViewChanged.HasDelegate)
+        {
+            await ViewChanged.InvokeAsync(_view);
+        }
+        else
+        {
+            Navigation.NavigateTo($"/?view={_view}");
+        }
+    }
+}
+
+<section class="bt-shell" aria-label="BlazorTelemetry">
+    <aside class="bt-sidebar">
+        <div class="bt-brand">
+            <span class="bt-brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="bt-brand-text">
+                <span><strong>Blazor</strong>Telemetry</span>
+                <small class="bt-brand-version">@_assemblyVersion</small>
+            </span>
+        </div>
+        <nav aria-label="Telemetry navigation">
+            <button type="button" class="@(ActiveView == "dashboards" ? "active" : null)" @onclick='() => SelectView("dashboards")'><span class="bt-nav-icon" aria-hidden="true">dashboard</span>Dashboard</button>
+            <button type="button" class="@(ActiveView == "requests" ? "active" : null)" @onclick='() => SelectView("requests")'><span class="bt-nav-icon" aria-hidden="true">http</span>Requests</button>
+            <button type="button" class="@(ActiveView == "logs" ? "active" : null)" @onclick='() => SelectView("logs")'><span class="bt-nav-icon" aria-hidden="true">description</span>Logs</button>
+            <button type="button" class="@(ActiveView == "traces" ? "active" : null)" @onclick='() => SelectView("traces")'><span class="bt-nav-icon" aria-hidden="true">account_tree</span>Traces</button>
+            <button type="button" class="@(ActiveView == "metrics" ? "active" : null)" @onclick='() => SelectView("metrics")'><span class="bt-nav-icon" aria-hidden="true">query_stats</span>Metrics</button>
+            <button type="button" class="@(ActiveView == "alerts" ? "active" : null)" @onclick='() => SelectView("alerts")'><span class="bt-nav-icon" aria-hidden="true">notifications</span>Alerts @if (ActiveIncidents > 0) { <b>@ActiveIncidents</b> }</button>
+            <AuthorizeView Policy="BlazorTelemetryAdministrator">
+                <button type="button" class="@(ActiveView == "admin" ? "active" : null)" @onclick='() => SelectView("admin")'><span class="bt-nav-icon" aria-hidden="true">admin_panel_settings</span>Administration</button>
+            </AuthorizeView>
+        </nav>
+        @if (SidebarFooter is not null)
+        {
+            <div class="bt-sidebar-footer">
+                @SidebarFooter
+            </div>
+        }
+        <div class="bt-collector-state"><span></span><div><strong>Collector active</strong><small>OTLP · HTTP/protobuf</small></div></div>
+    </aside>
+
+    @ChildContent
+</section>
