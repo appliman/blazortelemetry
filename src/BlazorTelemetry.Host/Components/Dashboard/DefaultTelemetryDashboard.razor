@@ -1,4 +1,7 @@
+@inject BlazorTelemetryOptions Options
+
 @code {
+    private long? _databaseDiskBytes;
     [Parameter, EditorRequired]
     public TelemetrySummary Summary { get; set; } = new(0, 0, 0, 0, 0, 0, null, null, []);
 
@@ -133,6 +136,7 @@
 
     protected override void OnParametersSet()
     {
+        _databaseDiskBytes = ReadDatabaseDiskBytes();
         if (!ReferenceEquals(_processedMetrics, Metrics) || _processedFromUtc != FromUtc || _processedToUtc != ToUtc)
         {
             _processMetrics = ProcessMetricSeries.Create(Metrics, FromUtc, ToUtc);
@@ -140,6 +144,55 @@
             _processedFromUtc = FromUtc;
             _processedToUtc = ToUtc;
         }
+    }
+
+    private long? ReadDatabaseDiskBytes()
+    {
+        try
+        {
+            var _connection = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(Options.ConnectionString);
+            if (_connection.Mode == Microsoft.Data.Sqlite.SqliteOpenMode.Memory || string.IsNullOrWhiteSpace(_connection.DataSource) || _connection.DataSource == ":memory:")
+            {
+                return null;
+            }
+
+            var _path = Path.GetFullPath(_connection.DataSource);
+            var _database = new FileInfo(_path);
+            if (!_database.Exists)
+            {
+                return null;
+            }
+
+            var _bytes = _database.Length;
+            foreach (var _suffix in new[] { "-wal", "-shm", "-journal" })
+            {
+                var _file = new FileInfo(_path + _suffix);
+                if (_file.Exists)
+                {
+                    _bytes += _file.Length;
+                }
+            }
+
+            return _bytes;
+        }
+        catch (Exception _exception) when (_exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private static string FormatDiskSize(long _bytes)
+    {
+        string[] _units = ["B", "KiB", "MiB", "GiB", "TiB"];
+        var _size = (double)_bytes;
+        var _unit = 0;
+        while (_size >= 1024 && _unit < _units.Length - 1)
+        {
+            _size /= 1024;
+            _unit++;
+        }
+
+        return $"{_size.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} {_units[_unit]}";
     }
 
     private static IReadOnlyList<ChartPoint> ToChartPoints(IReadOnlyList<MetricSeriesPoint> _points) =>
@@ -419,4 +472,11 @@
             }
         </article>
     </div>
+    <article class="bt-monitor-card bt-database-storage">
+        <header>
+            <h2>BlazorTelemetry database size on disk</h2>
+            <strong>@(_databaseDiskBytes.HasValue ? FormatDiskSize(_databaseDiskBytes.Value) : "Unavailable")</strong>
+        </header>
+        <p>Current storage across all applications and periods, including SQLite auxiliary files.</p>
+    </article>
 </section>
