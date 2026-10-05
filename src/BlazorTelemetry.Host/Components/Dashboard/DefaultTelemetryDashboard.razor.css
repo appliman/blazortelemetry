@@ -5,6 +5,9 @@
 .bt-monitor-card > header { min-height: 45px; padding: 12px 14px 8px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .bt-monitor-card h2, .bt-kpi-card h2, .bt-split-card h2 { margin: 0; color: #dfe7ec; font-size: 13px; font-weight: 650; }
 .bt-monitor-card header > span { color: #85929d; font-size: 10px; }
+.bt-database-storage > header { flex-wrap: wrap; align-items: center; }
+.bt-database-storage header strong { color: #76e4b8; font-size: 24px; font-variant-numeric: tabular-nums; }
+.bt-database-storage > p { margin: 0; padding: 0 14px 14px; color: #9ba8b2; font-size: 12px; }
 .bt-large-chart { min-height: 338px; }
 .bt-large-chart :deep(.telemetry-chart) { margin: 0 6px 4px; }
 .bt-no-data { min-height: 288px; display: grid; place-items: center; color: #9aa5ae; font-size: 17px; }
