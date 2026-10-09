@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
@@ -37,12 +38,12 @@ internal static class HttpTelemetryEnricher
     public static void EnrichResponse(Activity activity, HttpResponse response, BlazorTelemetryClientOptions options)
     {
         var context = response.HttpContext;
-        var connection = context.Connection;
 
         if (options.CaptureClientAddress)
         {
-            activity.SetTag("client.address", connection.RemoteIpAddress?.ToString());
-            activity.SetTag("client.port", PositiveOrNull(connection.RemotePort));
+            var (_address, _port) = GetClientAddress(context);
+            activity.SetTag("client.address", _address);
+            activity.SetTag("client.port", _port);
         }
 
         activity.SetTag("http.request.forwarded", HasForwardedHeaders(context.Request));
@@ -104,6 +105,34 @@ internal static class HttpTelemetryEnricher
     {
         activity.SetTag("error.type", exception.GetType().FullName);
         options.EnrichHttpClientException?.Invoke(activity, exception);
+    }
+
+    private static (string? Address, int? Port) GetClientAddress(HttpContext _context)
+    {
+        var _connection = _context.Connection;
+        var _forwardedFor = _context.Request.Headers["X-Forwarded-For"];
+        if (_forwardedFor.Count > 0)
+        {
+            // Use the original client's first entry for telemetry only, without changing proxy trust or the connection.
+            var _value = _forwardedFor[0].AsSpan();
+            var _separator = _value.IndexOf(',');
+            if (_separator >= 0)
+            {
+                _value = _value[.._separator];
+            }
+
+            _value = _value.Trim();
+            if (IPEndPoint.TryParse(_value, out var _endpoint))
+            {
+                // The connection port belongs to the proxy unless the connection already identifies this client.
+                var _port = PositiveOrNull(_endpoint.Port)
+                    ?? (_endpoint.Address.Equals(_connection.RemoteIpAddress) ? PositiveOrNull(_connection.RemotePort) : null);
+                return (_endpoint.Address.ToString(), _port);
+            }
+        }
+
+        // Forwarded Headers Middleware may already have consumed the header and updated the connection.
+        return (_connection.RemoteIpAddress?.ToString(), PositiveOrNull(_connection.RemotePort));
     }
 
     private static void CaptureHeaders(
