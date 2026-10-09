@@ -2,9 +2,13 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net;
 using BlazorTelemetry.Client;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
 
 namespace BlazorTelemetry.Tests;
@@ -178,6 +182,94 @@ public sealed class BlazorTelemetryClientTests
         Assert.Equal(true, tags["http.request.forwarded"]);
         Assert.DoesNotContain("http.request.header.authorization", tags.Keys);
         Assert.DoesNotContain("http.request.header.x-forwarded-for", tags.Keys);
+    }
+
+    [Fact]
+    public void HttpTelemetryEnricherUsesOriginalClientFromMultipleForwardedHeaderLines()
+    {
+        var _options = new BlazorTelemetryClientOptions { CaptureHttpHeaders = false };
+        var _context = new DefaultHttpContext();
+        _context.Connection.RemoteIpAddress = IPAddress.Parse("172.25.0.1");
+        _context.Connection.RemotePort = 55000;
+        _context.Request.Headers["X-Forwarded-For"] = new[] { "203.0.113.10, 10.0.0.2", "10.0.0.3" };
+        using var _activity = new Activity("forwarded-request").Start();
+
+        HttpTelemetryEnricher.EnrichRequest(_activity, _context.Request, _options);
+        HttpTelemetryEnricher.EnrichResponse(_activity, _context.Response, _options);
+
+        Assert.Equal("203.0.113.10", _activity.GetTagItem("client.address"));
+        Assert.Null(_activity.GetTagItem("client.port"));
+        Assert.Equal("172.25.0.1", _activity.GetTagItem("network.peer.address"));
+        Assert.Equal(55000, _activity.GetTagItem("network.peer.port"));
+        Assert.Equal(IPAddress.Parse("172.25.0.1"), _context.Connection.RemoteIpAddress);
+        Assert.Null(_activity.GetTagItem("http.request.header.x-forwarded-for"));
+    }
+
+    [Theory]
+    [InlineData("203.0.113.10", "203.0.113.10", null)]
+    [InlineData(" 203.0.113.10 , 10.0.0.2 ", "203.0.113.10", null)]
+    [InlineData("203.0.113.10:54321, 10.0.0.2", "203.0.113.10", 54321)]
+    [InlineData("2001:db8::10, 10.0.0.2", "2001:db8::10", null)]
+    [InlineData("[2001:db8::10]:54321", "2001:db8::10", 54321)]
+    [InlineData(null, "172.25.0.1", 55000)]
+    [InlineData("", "172.25.0.1", 55000)]
+    [InlineData("unknown, 10.0.0.2", "172.25.0.1", 55000)]
+    [InlineData(", 10.0.0.2", "172.25.0.1", 55000)]
+    [InlineData("203.0.113.10:99999", "172.25.0.1", 55000)]
+    public void HttpTelemetryEnricherResolvesForwardedClientAddress(string? _header, string _expectedAddress, int? _expectedPort)
+    {
+        var _context = new DefaultHttpContext();
+        _context.Connection.RemoteIpAddress = IPAddress.Parse("172.25.0.1");
+        _context.Connection.RemotePort = 55000;
+        _context.Request.Headers["X-Forwarded-For"] = _header;
+        using var _activity = new Activity("forwarded-request").Start();
+        _activity.SetTag("client.port", 55000);
+
+        HttpTelemetryEnricher.EnrichResponse(_activity, _context.Response, new BlazorTelemetryClientOptions());
+
+        Assert.Equal(_expectedAddress, _activity.GetTagItem("client.address"));
+        Assert.Equal(_expectedPort, _activity.GetTagItem("client.port"));
+    }
+
+    [Fact]
+    public async Task HttpTelemetryEnricherUsesConnectionAfterForwardedHeadersAreConsumed()
+    {
+        var _options = new BlazorTelemetryClientOptions();
+        var _context = new DefaultHttpContext();
+        _context.Connection.RemoteIpAddress = IPAddress.Parse("172.25.0.1");
+        _context.Connection.RemotePort = 55000;
+        _context.Request.Headers["X-Forwarded-For"] = "203.0.113.10:54321";
+        using var _activity = new Activity("forwarded-request").Start();
+        HttpTelemetryEnricher.EnrichRequest(_activity, _context.Request, _options);
+        var _forwardedOptions = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor };
+        _forwardedOptions.KnownProxies.Add(_context.Connection.RemoteIpAddress);
+        var _middleware = new ForwardedHeadersMiddleware(
+            _ => Task.CompletedTask, NullLoggerFactory.Instance, Options.Create(_forwardedOptions));
+
+        await _middleware.Invoke(_context);
+        HttpTelemetryEnricher.EnrichResponse(_activity, _context.Response, _options);
+
+        Assert.False(_context.Request.Headers.ContainsKey("X-Forwarded-For"));
+        Assert.Equal("203.0.113.10", _activity.GetTagItem("client.address"));
+        Assert.Equal(54321, _activity.GetTagItem("client.port"));
+        Assert.Equal("172.25.0.1", _activity.GetTagItem("network.peer.address"));
+    }
+
+    [Fact]
+    public void HttpTelemetryEnricherRespectsDisabledClientAddressCaptureWithForwardedHeaders()
+    {
+        var _options = new BlazorTelemetryClientOptions { CaptureClientAddress = false };
+        var _context = new DefaultHttpContext();
+        _context.Connection.RemoteIpAddress = IPAddress.Parse("172.25.0.1");
+        _context.Request.Headers["X-Forwarded-For"] = "203.0.113.10";
+        using var _activity = new Activity("forwarded-request").Start();
+
+        HttpTelemetryEnricher.EnrichRequest(_activity, _context.Request, _options);
+        HttpTelemetryEnricher.EnrichResponse(_activity, _context.Response, _options);
+
+        Assert.Null(_activity.GetTagItem("client.address"));
+        Assert.Null(_activity.GetTagItem("client.port"));
+        Assert.Equal("172.25.0.1", _activity.GetTagItem("network.peer.address"));
     }
 
     [Fact]
