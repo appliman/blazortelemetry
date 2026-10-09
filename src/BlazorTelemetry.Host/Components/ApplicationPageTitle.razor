@@ -1,0 +1,11 @@
+@inject BlazorTelemetry.Host.Authentication.BlazorAuthConfiguration Settings
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+}
+
+<PageTitle>@Settings.ApplicationName@if (ChildContent is not null)
+    {
+        <text> · @ChildContent</text>
+    }</PageTitle>

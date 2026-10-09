@@ -1,72 +1,143 @@
-﻿@page "/login/qr-code"
-@using System.Web
-@using BlazorTelemetry.Host.Authentication
-@using Microsoft.AspNetCore.RateLimiting
-@using QRCoder
-
+@page "/login/qr-code"
 @rendermode InteractiveServer
-
+@implements IDisposable
+@using BlazorTelemetry.Host.Authentication
+@using QRCoder
+@using System.Web
 @inject BlazorAuthConfiguration Settings
+@inject UserAuthenticationService Authentication
+@inject UserAttemptLimiter Limiter
+@inject Blazor2faAuthenticationTicketStore TicketStore
+@inject NavigationManager Navigation
 
 @code {
+    private readonly CancellationTokenSource _lifetime = new();
 
-    string? qrCodeImageUrl;
-    string? base64Image;
-    protected string? secretKey = null!;
-
-    [EnableRateLimiting("login")]
-    protected void Generate()
+    public void Dispose()
     {
-        if (!Settings.SecretKey.Equals(secretKey, StringComparison.Ordinal))
+        _setupSecret = null;
+        _secret = "";
+        _code = "";
+        _image = null;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+
+    private string _identifier = "";
+    private string _secret = "";
+    private string _code = "";
+    private string? _image;
+    private string? _error;
+    private string? _setupIdentifier;
+    private string? _setupSecret;
+    private bool _adminSetup;
+    private bool _busy;
+    private bool _interactiveReady;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _interactiveReady = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Generate()
+    {
+        if (_busy)
         {
             return;
         }
+        _busy = true;
+        _error = null;
+        try
+        {
+            string? _uri;
+            _adminSetup = Settings.AllowedUserLogins.Contains(_identifier.Trim(), StringComparer.OrdinalIgnoreCase);
+            if (_adminSetup)
+            {
+                if (!Limiter.Allow(_identifier) || string.IsNullOrWhiteSpace(Settings.SecretKey) || _secret != Settings.SecretKey)
+                {
+                    _error = "The identifier or secret is invalid, or setup is unavailable.";
+                    return;
+                }
+                var _setup = new TwoFactorAuthenticator().GenerateSetupCode(Settings.Issuer, Settings.ApplicationName, Settings.SecretKey, 300, 300);
+                _uri = HttpUtility.ParseQueryString(new Uri(_setup.QrCodeSetupImageUrl).Query).Get("chl");
+            }
+            else
+            {
+                _uri = await Authentication.SetupUri(_identifier, _secret, _lifetime.Token);
+            }
+            if (_uri is null)
+            {
+                _error = "The identifier or secret is invalid, or setup is unavailable.";
+                return;
+            }
+            using var _generator = new QRCodeGenerator();
+            using var _data = _generator.CreateQrCode(_uri, QRCodeGenerator.ECCLevel.Q);
+            using var _qr = new PngByteQRCode(_data);
+            _image = Convert.ToBase64String(_qr.GetGraphic(8));
+            _setupIdentifier = _identifier.Trim();
+            _setupSecret = _secret;
+            _secret = "";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
 
-        var authenticator = new TwoFactorAuthenticator();
-        var setupResult = authenticator.GenerateSetupCode(Settings.Issuer, Settings.ApplicationName, Settings.SecretKey, 300, 300);
-        qrCodeImageUrl = setupResult.QrCodeSetupImageUrl;
-        var url = new Uri(qrCodeImageUrl);
-        qrCodeImageUrl = HttpUtility.ParseQueryString(url.Query).Get("chl")!;
-
-        var qrGenerator = new QRCodeGenerator();
-        var qrCodeData = qrGenerator.CreateQrCode(qrCodeImageUrl, QRCodeGenerator.ECCLevel.Q);
-        var qrCode = new PngByteQRCode(qrCodeData);
-        var qrCodeImage = qrCode.GetGraphic(20);
-
-        base64Image = Convert.ToBase64String(qrCodeImage);
+    private async Task Confirm()
+    {
+        if (_busy)
+        {
+            return;
+        }
+        _busy = true;
+        try
+        {
+            var _claims = await Authentication.Authenticate(_setupIdentifier ?? "", _code, _setupSecret, _lifetime.Token);
+            if (_claims is null)
+            {
+                _error = "The authentication code is invalid, or setup is unavailable.";
+                return;
+            }
+            _image = null;
+            _setupSecret = null;
+            Navigation.NavigateTo($"/b2fa/authenticate/{TicketStore.Issue(_claims)}", true);
+        }
+        finally
+        {
+            _busy = false;
+        }
     }
 }
 
-
-<PageTitle>Set up authentication · BlazorTelemetry</PageTitle>
-<main class="auth-page container py-5">
-    <div class="auth-card mx-auto">
-        <span class="auth-label">TOTP setup</span>
-        <h1>Set up your authenticator</h1>
-        <p>Enter the secret configured in <code>Blazor2fa:SecretKey</code>, then scan the QR code with your authenticator app.</p>
-        @if (qrCodeImageUrl is null)
-        {
-            <EditForm Model="this" FormName="generateQRCode" OnValidSubmit="Generate">
-                <div class="m-auto">
-                    <p class="mb-2">Configured secret</p>
-                    <InputText class="form-control" type="password" @bind-Value="@secretKey" autocomplete="off" />
-                </div>
-                <div class="w-100 text-end mt-2">
-                    <button type="submit" class="btn btn-primary">Generate QR code</button>
-                </div>
-            </EditForm>
-        }
-        else
-        {
-            <div class="text-center">
-                <p class="mb-2 text-body-secondary">Authenticator entry</p>
-                <p class="mb-3"><strong>@Settings.Issuer</strong>: @Settings.ApplicationName</p>
-                <img style="image-rendering: pixelated; max-width: 100%; height: auto;"
-                     src="data:image/png;base64,@base64Image"
-                     alt="Authenticator setup QR code">
-            </div>
-        }
-
-        <p class="auth-help"><a href="/login">Back to sign in</a></p>
-    </div>
-</main>
+<ApplicationPageTitle>Set up authentication</ApplicationPageTitle>
+<main class="auth-page container py-5"><div class="auth-card mx-auto">
+    <span class="auth-label">TOTP setup</span><h1>Set up your authenticator</h1>
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger" role="alert">@_error</div>
+    }
+    @if (_image is null)
+    {
+        <p>Enter your identifier and the secret provided by your administrator. Configured administrators use their configured secret.</p>
+        <EditForm Model="this" OnValidSubmit="Generate" FormName="generateQRCode">
+            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="identifier" class="form-control" placeholder="Identifier" @bind-Value="_identifier" autocomplete="username" maxlength="256" /><label for="identifier">Identifier</label></div>
+            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="secret" class="form-control" placeholder="Secret" type="password" @bind-Value="_secret" autocomplete="off" /><label for="secret">Secret</label></div>
+            <button type="submit" class="btn btn-primary" disabled="@(_busy || !_interactiveReady)">Generate QR code</button>
+        </EditForm>
+    }
+    else
+    {
+        <p>Scan this QR code with your personal authenticator, then enter its current code.</p>
+        <div class="text-center"><strong>@_setupIdentifier</strong><br /><img style="image-rendering:pixelated;max-width:100%;height:auto" src="data:image/png;base64,@_image" alt="Authenticator setup QR code" /></div>
+        <EditForm Model="this" OnValidSubmit="Confirm" FormName="confirmAuthenticator">
+            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="code" class="form-control" placeholder="Authentication code" @bind-Value="_code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><label for="code">Authentication code</label></div>
+            <button type="submit" class="btn btn-primary" disabled="@(_busy || !_interactiveReady)">Confirm and sign in</button>
+        </EditForm>
+    }
+    <p class="auth-help"><a href="/login">Back to sign in</a></p>
+</div></main>

@@ -1,146 +1,75 @@
-﻿@page "/login"
-
-@using System.Security.Claims
-@using BlazorTelemetry.Host.Authentication
-@using Microsoft.AspNetCore.RateLimiting
-
+@page "/login"
 @rendermode InteractiveServer
-
-@inject NavigationManager NavigationManager
-@inject ILogger<Login> Logger
-@inject BlazorAuthConfiguration Settings
-@inject IServiceProvider Services
+@implements IDisposable
+@using BlazorTelemetry.Host.Authentication
+@inject NavigationManager Navigation
+@inject UserAuthenticationService Authentication
 @inject Blazor2faAuthenticationTicketStore TicketStore
 
 @code {
-    [SupplyParameterFromQuery(Name = "error")]
-    public string? Error { get; set; }
+    private readonly CancellationTokenSource _lifetime = new();
 
-    [SupplyParameterFromQuery(Name = "returnUrl")]
-    public string? ReturnUrl { get; set; }
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
 
-	LoginForm loginForm = default!;
-	CustomValidator customValidator = default!;
-	string SafeReturnUrl => IsLocalUrl(ReturnUrl) ? ReturnUrl! : "/";
+    [SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrl { get; set; }
+    private LoginForm _form = new();
+    private string? _error;
+    private bool _busy;
+    private bool _interactiveReady;
 
-	protected override void OnInitialized()
-	{
-		loginForm ??= new();
-	}
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _interactiveReady = true;
+            StateHasChanged();
+        }
+    }
 
-	[EnableRateLimiting("login")]
-	async Task Validate()
-	{
-		await Task.Yield();
-
-		if (loginForm?.Step == "Email"
-			&& Settings.AllowedUserLogins is not null)
-		{
-			var allowedEmail = Settings.AllowedUserLogins.Find(i => loginForm.Email!.Equals(i, StringComparison.InvariantCultureIgnoreCase));
-			if (allowedEmail is null)
-			{
-				customValidator.DisplayError("This email address is not authorized.");
-				return;
-			}
-			loginForm.Email = allowedEmail;
-			loginForm.Step = "Digicode";
-		}
-		else if (loginForm!.Step == "Digicode")
-		{
-			if (string.IsNullOrWhiteSpace(loginForm.Digicode))
-			{
-				customValidator.DisplayError("Enter the code from your authenticator app.");
-				return;
-			}
-			var googleAuthenticator = new TwoFactorAuthenticator();
-
-			var validResult = googleAuthenticator.ValidateTwoFactorPIN(Settings.SecretKey, loginForm.Digicode);
-			if (!validResult)
-			{
-				customValidator.DisplayError("The authentication code is invalid.");
-				return;
-			}
-
-			IReadOnlyCollection<Claim>? claims;
-			if (Settings.ClaimsFactory is null)
-			{
-				claims =
-				[
-					new Claim(ClaimTypes.NameIdentifier, loginForm.Email!),
-					new Claim(ClaimTypes.Email, loginForm.Email!),
-					new Claim(ClaimTypes.Role, Settings.ClaimRole)
-				];
-			}
-			else
-			{
-				claims = await Settings.ClaimsFactory(
-					loginForm.Email!,
-					loginForm.Digicode,
-					Services,
-					CancellationToken.None);
-			}
-
-			if (claims is null)
-			{
-				customValidator.DisplayError("This account is not authorized.");
-				return;
-			}
-
-			var token = TicketStore.Issue(claims);
-			var authenticateUrl = $"/b2fa/authenticate/{token}";
-			if (!string.IsNullOrWhiteSpace(ReturnUrl))
-			{
-				authenticateUrl += $"?ReturnUrl={Uri.EscapeDataString(ReturnUrl)}";
-			}
-
-			NavigationManager.NavigateTo(authenticateUrl, true);
-		}
-	}
-
-	private static bool IsLocalUrl(string? url)
-	{
-		return !string.IsNullOrWhiteSpace(url)
-			&& url.StartsWith("/", StringComparison.Ordinal)
-			&& !url.StartsWith("//", StringComparison.Ordinal)
-			&& !url.StartsWith("/\\", StringComparison.Ordinal);
-	}
+    private async Task SignIn()
+    {
+        if (_busy)
+        {
+            return;
+        }
+        _busy = true;
+        try
+        {
+            var _claims = await Authentication.Authenticate(_form.Identifier ?? "", _form.Digicode ?? "", null, _lifetime.Token);
+            if (_claims is null)
+            {
+                _error = "The identifier or authentication code is invalid, or access is unavailable. New users must set up their authenticator first.";
+                return;
+            }
+            var _target = !string.IsNullOrWhiteSpace(ReturnUrl) && ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//") && !ReturnUrl.StartsWith("/\\") ? ReturnUrl : "/";
+            Navigation.NavigateTo($"/b2fa/authenticate/{TicketStore.Issue(_claims)}?ReturnUrl={Uri.EscapeDataString(_target)}", true);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
 }
 
-<PageTitle>Sign in · BlazorTelemetry</PageTitle>
+<ApplicationPageTitle>Sign in</ApplicationPageTitle>
 <main class="auth-page container py-5">
     <div class="auth-card mx-auto">
-        <span class="auth-label">Secure access</span>
-        <h1>Sign in</h1>
-        <p>Enter your authorized email address and the current code from your authenticator app.</p>
-        @if (!string.IsNullOrWhiteSpace(Error))
+        <span class="auth-label">Secure access</span><h1>Sign in</h1>
+        <p>Enter your identifier and the current code from your authenticator app.</p>
+        @if (_error is not null)
         {
-            <div class="alert alert-danger" role="alert">The email address or authentication code is invalid.</div>
+            <div class="alert alert-danger" role="alert">@_error</div>
         }
-        <EditForm Model="loginForm" OnValidSubmit="Validate" FormName="loginform2fa">
-            <DataAnnotationsValidator />
-            <ValidationSummary />
-            <CustomValidator @ref="customValidator"></CustomValidator>
-            @if (loginForm.Step == "Email")
-            {
-                <div class="m-auto">
-                    <p class="mb-2">Email address</p>
-                    <InputText class="form-control" type="email" @bind-Value="@loginForm.Email" placeholder="admin@example.com" autocomplete="username" />
-                </div>
-                <div class="w-100 text-end mt-2">
-                    <button class="btn btn-primary" type="submit">Continue</button>
-                </div>
-            }
-            else if (loginForm.Step == "Digicode")
-            {
-                <div class="m-auto">
-                    <p class="mb-2">Authentication code</p>
-                    <InputText inputmode="numeric" class="form-control" autocomplete="one-time-code" @bind-Value="@loginForm.Digicode" />
-                </div>
-                <div class="w-100 text-end mt-2">
-                    <button class="btn btn-primary" type="submit">Sign in</button>
-                </div>
-            }
+        <EditForm Model="_form" OnValidSubmit="SignIn" FormName="loginform2fa">
+            <DataAnnotationsValidator /><ValidationSummary />
+            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="identifier" class="form-control" placeholder="Identifier" @bind-Value="_form.Identifier" autocomplete="username" maxlength="256" /><label for="identifier">Identifier</label></div>
+            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="code" class="form-control" placeholder="Authentication code" @bind-Value="_form.Digicode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><label for="code">Authentication code</label></div>
+            <button class="btn btn-primary" disabled="@(_busy || !_interactiveReady)" type="submit">Sign in</button>
         </EditForm>
-
+        <p class="auth-help"><a href="/login/qr-code">Set up your authenticator</a></p>
     </div>
 </main>
