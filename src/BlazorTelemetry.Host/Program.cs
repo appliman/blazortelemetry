@@ -1,4 +1,5 @@
-﻿using BlazorTelemetry.AspNetCore;
+using Microsoft.AspNetCore.Authentication;
+using BlazorTelemetry.AspNetCore;
 using BlazorTelemetry.Core;
 using BlazorTelemetry.Host.Administration;
 using BlazorTelemetry.Host.Authentication;
@@ -19,6 +20,10 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddSingleton<UserAttemptLimiter>();
+builder.Services.AddScoped<UserAuthenticationService>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider, UserRevalidatingAuthenticationStateProvider>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, UserSessionAuthorizationHandler>();
 
 var twoFactorConfiguration = builder.Configuration
 	.GetSection("Blazor2fa")
@@ -30,30 +35,6 @@ twoFactorConfiguration.Issuer = string.IsNullOrWhiteSpace(twoFactorConfiguration
 twoFactorConfiguration.ApplicationName = string.IsNullOrWhiteSpace(twoFactorConfiguration.ApplicationName)
 	? $"{builder.Environment.EnvironmentName} Administrator"
 	: twoFactorConfiguration.ApplicationName.Trim();
-twoFactorConfiguration.ClaimsFactory = (email, code, _, _) =>
-{
-	var normalizedEmail = email.Trim();
-	var isAllowed = twoFactorConfiguration.AllowedUserLogins.Contains(
-		normalizedEmail,
-		StringComparer.OrdinalIgnoreCase);
-	var isCodeValid = !string.IsNullOrWhiteSpace(twoFactorConfiguration.SecretKey)
-		&& new TwoFactorAuthenticator().ValidateTwoFactorPIN(
-			twoFactorConfiguration.SecretKey,
-			code.Trim());
-	if (!isAllowed || !isCodeValid)
-	{
-		return Task.FromResult<IReadOnlyCollection<Claim>?>(null);
-	}
-
-	IReadOnlyCollection<Claim> claims =
-	[
-		new Claim(ClaimTypes.NameIdentifier, normalizedEmail),
-		new Claim(ClaimTypes.Name, normalizedEmail),
-		new Claim(ClaimTypes.Email, normalizedEmail),
-		new Claim(ClaimTypes.Role, "Administrator")
-	];
-	return Task.FromResult<IReadOnlyCollection<Claim>?>(claims);
-};
 builder.AddBlazor2fa(twoFactorConfiguration);
 builder.Services.AddControllersWithViews();
 
@@ -74,11 +55,20 @@ builder.Services.AddAuthentication(options =>
 		options.Cookie.SameSite = SameSiteMode.Lax;
 		options.ExpireTimeSpan = TimeSpan.FromDays(twoFactorConfiguration.CookieDurationInDays);
 		options.SlidingExpiration = true;
+        options.Events.OnValidatePrincipal = async context =>
+        {
+            var authentication = context.HttpContext.RequestServices.GetRequiredService<UserAuthenticationService>();
+            if (context.Principal is null || !await authentication.IsCurrent(context.Principal, context.HttpContext.RequestAborted))
+            {
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            }
+        };
 	});
 
 builder.Services.AddAuthorizationBuilder()
-	.AddPolicy("BlazorTelemetryReader", policy => policy.RequireRole("Reader", "Administrator"))
-	.AddPolicy("BlazorTelemetryAdministrator", policy => policy.RequireRole("Administrator"));
+	.AddPolicy("BlazorTelemetryReader", policy => policy.RequireRole("Reader", "Administrator").AddRequirements(new UserSessionRequirement()))
+	.AddPolicy("BlazorTelemetryAdministrator", policy => policy.RequireRole("Administrator").AddRequirements(new UserSessionRequirement()));
 
 var baseTelemetryOptions = builder.Configuration
 	.GetSection(BlazorTelemetryOptions.SECTION_NAME)

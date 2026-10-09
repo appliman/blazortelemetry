@@ -1,0 +1,54 @@
+@page "/users"
+@attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
+@rendermode InteractiveServer
+@implements IDisposable
+@using BlazorTelemetry.Core
+@using BlazorTelemetry.Host.Contracts.Models.Users
+@inject IMediator Repository
+@inject AuthenticationStateProvider Authentication
+
+@code {
+    private readonly CancellationTokenSource _lifetime = new();
+
+    public void Dispose()
+    {
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+
+    private IReadOnlyList<TelemetryUser> _users = [];
+    private string? _error;
+    private RenderFragment Account => @<TelemetryAccount />;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var _result = await Repository.Send(new GetUsersRequest((await Authentication.GetAuthenticationStateAsync()).User), _lifetime.Token);
+        _users = _result.Data ?? [];
+        _error = _result.HasError ? string.Join(" ", _result.BrokenRules.Select(rule => rule.Message)) : null;
+    }
+}
+
+<ApplicationPageTitle>Users</ApplicationPageTitle>
+<div class="telemetry-page">
+<TelemetryShell ActiveView="users" SidebarFooter="@Account">
+    <main class="container py-4">
+        <h1>Users</h1>
+        <p>Manage access to telemetry. Configuration is reserved for configured administrators.</p>
+        <a class="btn btn-primary mb-3" href="/users/new">Create user</a>
+        @if (_error is not null)
+        {
+            <div class="alert alert-danger" role="alert">@_error</div>
+        }
+        <div class="table-responsive">
+            <table class="table"><thead><tr><th>Identifier</th><th>Access</th><th>Authenticator</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var _user in _users)
+                    {
+                        <tr><td>@_user.Identifier</td><td>@(_user.IsActive ? "Active" : "Disabled")</td><td>@(_user.ActivatedUtc is null ? "Pending setup" : "Activated")</td><td><a href="@($"/users/{_user.Id}/edit")">Edit</a></td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </main>
+</TelemetryShell>
+</div>

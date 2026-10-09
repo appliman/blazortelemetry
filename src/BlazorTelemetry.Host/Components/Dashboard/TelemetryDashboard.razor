@@ -1,4 +1,7 @@
 @implements IAsyncDisposable
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthenticationState
+@inject Microsoft.AspNetCore.Authorization.IAuthorizationService Authorization
 @inject IMediator Repository
 @inject BlazorTelemetryOptions Options
 @inject Microsoft.Extensions.Hosting.IHostEnvironment HostEnvironment
@@ -108,6 +111,14 @@
     {
         try
         {
+            if (!await HasAccess(Options.ReaderPolicy))
+            {
+                _paused = true;
+                _page = new([], 0, false);
+                _error = "Your session is no longer valid. Sign in again.";
+                Navigation.NavigateTo("/login", forceLoad: true);
+                return;
+            }
             _error = null;
             if (!_timeRange.TryResolve(DateTimeOffset.UtcNow, out var fromUtc, out var toUtc))
             {
@@ -404,8 +415,19 @@
         await Refresh();
     }
 
+    private async Task<bool> HasAccess(string policy)
+    {
+        var principal = (await AuthenticationState.GetAuthenticationStateAsync()).User;
+        return (await Authorization.AuthorizeAsync(principal, policy)).Succeeded;
+    }
+
     private async Task SaveRule()
     {
+        if (!await HasAccess(Options.AdministratorPolicy))
+        {
+            _error = "Administrator access is required.";
+            return;
+        }
         var result = await Repository.Send(new SaveAlertRuleRequest(_newRule), _lifetime.Token);
         if (result.HasError)
         {
@@ -418,12 +440,22 @@
 
     private async Task DeleteRule(int id)
     {
+        if (!await HasAccess(Options.AdministratorPolicy))
+        {
+            _error = "Administrator access is required.";
+            return;
+        }
         await Repository.DeleteAlertRule(id, _lifetime.Token);
         await Refresh();
     }
 
     private async Task Acknowledge(long id)
     {
+        if (!await HasAccess(Options.ReaderPolicy))
+        {
+            _error = "Your session is no longer valid. Sign in again.";
+            return;
+        }
         await Repository.AcknowledgeIncident(id, _lifetime.Token);
         await Refresh();
     }

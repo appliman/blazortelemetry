@@ -14,12 +14,23 @@ public sealed partial class TelemetryDbContext(DbContextOptions<TelemetryDbConte
     public DbSet<DashboardDefinition> Dashboards => Set<DashboardDefinition>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
+    public DbSet<TelemetryUser> Users => Set<TelemetryUser>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<DataProtectionKey>(entity =>
         {
             entity.ToTable("DataProtectionKeys");
             entity.HasKey(key => key.Id);
+        });
+
+        modelBuilder.Entity<TelemetryUser>(entity =>
+        {
+            entity.HasKey(user => user.Id);
+            entity.Property(user => user.Identifier).UseCollation("NOCASE").IsRequired().HasMaxLength(256);
+            entity.HasIndex(user => user.Identifier).IsUnique();
+            entity.Property(user => user.SecurityVersion).IsConcurrencyToken();
+            entity.Property(user => user.ActivatedUtc).HasConversion<long?>();
         });
 
         ConfigureTelemetry(modelBuilder);

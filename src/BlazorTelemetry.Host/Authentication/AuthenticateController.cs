@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,6 +10,7 @@ namespace BlazorTelemetry.Host.Authentication;
 public class AuthenticateController(
 	ILogger<AuthenticateController> logger,
 	Blazor2faAuthenticationTicketStore ticketStore,
+	UserAuthenticationService authentication,
 	BlazorAuthConfiguration settings
 	)
 	: Controller
@@ -31,7 +32,12 @@ public class AuthenticateController(
 			return Redirect("/");
 		}
 
-		var claimsIdentity = new ClaimsIdentity(
+		if (!await authentication.IsCurrent(new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)), HttpContext.RequestAborted))
+        {
+            return Redirect("/login");
+        }
+
+        var claimsIdentity = new ClaimsIdentity(
 			claims,
 			CookieAuthenticationDefaults.AuthenticationScheme);
 
@@ -61,7 +67,7 @@ public class AuthenticateController(
 		{
 			logger.LogInformation(
 				"User {Name} authenticated and redirected to {ReturnUrl}",
-				claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Email)?.Value,
+				claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Name)?.Value,
 				returnUrl);
 			return Redirect(returnUrl);
 		}

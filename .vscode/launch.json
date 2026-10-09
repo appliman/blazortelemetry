@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "BlazorTelemetry.Host: Debug",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build BlazorTelemetry.Host",
+            "program": "${workspaceFolder}/src/BlazorTelemetry.Host/bin/Debug/net10.0/BlazorTelemetry.Host.dll",
+            "cwd": "${workspaceFolder}/src/BlazorTelemetry.Host",
+            "launchSettingsFilePath": "${workspaceFolder}/src/BlazorTelemetry.Host/Properties/launchSettings.json",
+            "launchSettingsProfile": "http",
+            "console": "integratedTerminal",
+            "stopAtEntry": false,
+            "justMyCode": true
+        },
+        {
+            "name": "BlazorTelemetry.Host: Attach to hot reload",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:pickProcess}",
+            "justMyCode": true
+        }
+    ]
+}

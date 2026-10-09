@@ -1,11 +1,10 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace BlazorTelemetry.Host.Authentication;
 
 public class LoginForm
 {
-    [Required(ErrorMessage = "Email is required")]
-    public string? Email { get; set; }
-    public string Step { get; set; } = "Email";
+    [Required(ErrorMessage = "Identifier is required")]
+    public string? Identifier { get; set; }
     public string? Digicode { get; set; }
 }
