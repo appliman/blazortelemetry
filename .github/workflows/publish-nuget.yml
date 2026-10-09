@@ -60,12 +60,7 @@ jobs:
             ${{ env.PACKAGE_OUTPUT }}/*.snupkg
           retention-days: 14
 
-      - name: Publish package to NuGet.org
+      - name: Publish packages and matching symbols to NuGet.org
         run: dotnet nuget push "${{ env.PACKAGE_OUTPUT }}/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-
-      - name: Publish symbols to NuGet.org
-        run: dotnet nuget push "${{ env.PACKAGE_OUTPUT }}/*.snupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}

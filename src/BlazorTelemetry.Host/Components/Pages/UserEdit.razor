@@ -1,0 +1,135 @@
+@page "/users/new"
+@page "/users/{Id:long}/edit"
+@attribute [Authorize(Policy = "BlazorTelemetryAdministrator")]
+@rendermode InteractiveServer
+@implements IDisposable
+@using BlazorTelemetry.Core
+@using BlazorTelemetry.Host.Contracts.Models.Users
+@inject IMediator Repository
+@inject AuthenticationStateProvider Authentication
+
+@code {
+    private readonly CancellationTokenSource _lifetime = new();
+
+    public void Dispose()
+    {
+        _secret = null;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+
+    [Parameter] public long? Id { get; set; }
+    private TelemetryUser _user = new();
+    private Guid _expectedVersion;
+    private string? _error;
+    private string? _secret;
+    private bool _ready;
+    private bool _saved;
+    private bool _busy;
+    private bool _interactiveReady;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _interactiveReady = true;
+            StateHasChanged();
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _ready = false;
+        _secret = null;
+        _saved = false;
+        _error = null;
+        if (Id is null)
+        {
+            _user = new();
+        }
+        else
+        {
+            var _result = await Repository.Send(new GetUsersRequest((await Authentication.GetAuthenticationStateAsync()).User), _lifetime.Token);
+            var _userValue = _result.Data?.SingleOrDefault(value => value.Id == Id);
+            if (_result.HasError || _userValue is null)
+            {
+                _error = "The user could not be loaded.";
+                return;
+            }
+            _user = _userValue;
+        }
+        _expectedVersion = _user.SecurityVersion;
+        _ready = true;
+    }
+
+    private async Task Save(bool reset)
+    {
+        if (_busy)
+        {
+            return;
+        }
+        _busy = true;
+        _secret = null;
+        _saved = false;
+        try
+        {
+            var _principal = (await Authentication.GetAuthenticationStateAsync()).User;
+            var _result = await Repository.Send(new SaveUserRequest(_user, reset, _expectedVersion, _principal), _lifetime.Token);
+            _error = _result.HasError ? string.Join(" ", _result.BrokenRules.Select(rule => rule.Message)) : null;
+            if (!_result.HasError)
+            {
+                _expectedVersion = _user.SecurityVersion;
+                _secret = _result.Data;
+                _saved = true;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private RenderFragment Account => @<TelemetryAccount />;
+}
+
+<ApplicationPageTitle>User</ApplicationPageTitle>
+<div class="telemetry-page">
+<TelemetryShell ActiveView="users" SidebarFooter="@Account">
+    <main class="container py-4">
+        <h1>@(Id is null ? "Create user" : "Edit user")</h1>
+        @if (_error is not null)
+        {
+            <div class="alert alert-danger" role="alert">@_error</div>
+        }
+        @if (_saved)
+        {
+            <div class="alert alert-success" role="status">User saved.</div>
+        }
+        @if (_secret is not null)
+        {
+            <div class="alert alert-warning">
+                <p>Copy this secret now and give it to the user with their identifier. It will not be shown again.</p>
+                <code style="overflow-wrap:anywhere">@_secret</code>
+                <p class="mt-2 mb-0">Set up the authenticator at <a href="/login/qr-code">/login/qr-code</a>.</p>
+            </div>
+        }
+        @if (_ready)
+        {
+            <EditForm Model="_user" OnValidSubmit="@(() => Save(false))" FormName="userEdit">
+                <div class="form-floating mb-3">
+                    <InputText disabled="@(!_interactiveReady)" id="identifier" class="form-control" placeholder="Identifier" @bind-Value="_user.Identifier" maxlength="256" autocomplete="off" />
+                    <label for="identifier">Identifier</label>
+                </div>
+                <p>Changing the identifier requires a new authenticator setup and revokes existing sessions.</p>
+                <div class="form-check mb-3"><InputCheckbox disabled="@(!_interactiveReady)" id="active" class="form-check-input" @bind-Value="_user.IsActive" /><label class="form-check-label" for="active">Active</label></div>
+                <button class="btn btn-primary" type="submit" disabled="@(_busy || !_interactiveReady)">Save</button>
+                @if (_user.Id != 0)
+                {
+                    <button class="btn btn-outline-danger ms-2" type="button" disabled="@(_busy || !_interactiveReady)" @onclick="@(() => Save(true))">Reset secret and revoke sessions</button>
+                }
+                <a class="btn btn-link" href="/users">Back to users</a>
+            </EditForm>
+        }
+    </main>
+</TelemetryShell>
+</div>

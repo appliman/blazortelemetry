@@ -1,4 +1,4 @@
-@page "/"
+﻿@page "/"
 @attribute [Authorize(Policy = "BlazorTelemetryReader")]
 @rendermode InteractiveServer
 
@@ -7,7 +7,7 @@
     public string? View { get; set; }
 }
 
-<PageTitle>BlazorTelemetry</PageTitle>
+<ApplicationPageTitle>Dashboard</ApplicationPageTitle>
 <div class="telemetry-page">
     <TelemetryDashboard @key="View" InitialView="@View">
         <SidebarFooter>
