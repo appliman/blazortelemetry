@@ -78,6 +78,65 @@ public sealed partial class TelemetryCqrsTests
     }
 
     [Fact]
+    public async Task ResourceChartsFollowApplicationChangesAndClearWhenMetricsAreMissing()
+    {
+        var _from = DateTimeOffset.Parse("2026-10-12T10:00:00Z");
+        var _to = _from.AddMinutes(1);
+        foreach (var (_service, _factor) in new[] { ("app-a", 1d), ("app-b", 2d) })
+        {
+            var _items = new[]
+            {
+                ProcessMetricSeriesTests.Item("process.cpu.utilization", _from, .1 * _factor, _unit: "1"),
+                ProcessMetricSeriesTests.Item("process.memory.usage", _from, 10 * _factor * 1024 * 1024),
+                ProcessMetricSeriesTests.Item("process.network.io", _from.AddSeconds(-10), 0, _attributes: "{\"network.io.direction\":\"receive\"}"),
+                ProcessMetricSeriesTests.Item("process.network.io", _from, 10 * _factor * 1024, _attributes: "{\"network.io.direction\":\"receive\"}"),
+                ProcessMetricSeriesTests.Item("process.network.io", _from.AddSeconds(-10), 0, _attributes: "{\"network.io.direction\":\"transmit\"}"),
+                ProcessMetricSeriesTests.Item("process.network.io", _from, 20 * _factor * 1024, _attributes: "{\"network.io.direction\":\"transmit\"}"),
+                ProcessMetricSeriesTests.Item("process.disk.io", _from.AddSeconds(-10), 0, _attributes: "{\"disk.io.direction\":\"read\"}"),
+                ProcessMetricSeriesTests.Item("process.disk.io", _from, 30 * _factor * 1024, _attributes: "{\"disk.io.direction\":\"read\"}"),
+                ProcessMetricSeriesTests.Item("process.disk.io", _from.AddSeconds(-10), 0, _attributes: "{\"disk.io.direction\":\"write\"}"),
+                ProcessMetricSeriesTests.Item("process.disk.io", _from, 40 * _factor * 1024, _attributes: "{\"disk.io.direction\":\"write\"}")
+            };
+            foreach (var _item in _items)
+            {
+                _item.ServiceName = _service;
+            }
+            await _mediator.Store(_items, CancellationToken.None);
+        }
+
+        // Switch through individual applications, the aggregate, and an empty selection.
+        foreach (var (_service, _factor) in new (string?, double)[]
+        {
+            ("app-a", 1), ("app-b", 2), (null, 3), ("app-a", 1), ("missing-app", 0)
+        })
+        {
+            var _items = await _mediator.GetResourceMetrics(_from, _to, _service, CancellationToken.None);
+            if (_service is not null)
+            {
+                Assert.All(_items, _item => Assert.Equal(_service, _item.ServiceName));
+            }
+            var _series = ProcessMetricSeries.Create(_items, _from, _to);
+            if (_factor == 0)
+            {
+                Assert.Empty(_items);
+                Assert.Empty(_series.Cpu);
+                Assert.Empty(_series.Memory);
+                Assert.Empty(_series.Received);
+                Assert.Empty(_series.Sent);
+                Assert.Empty(_series.Read);
+                Assert.Empty(_series.Written);
+                continue;
+            }
+            Assert.Equal(10 * _factor, Assert.Single(_series.Cpu).Value);
+            Assert.Equal(10 * _factor, Assert.Single(_series.Memory).Value);
+            Assert.Equal(_factor, Assert.Single(_series.Received).Value);
+            Assert.Equal(2 * _factor, Assert.Single(_series.Sent).Value);
+            Assert.Equal(3 * _factor, Assert.Single(_series.Read).Value);
+            Assert.Equal(4 * _factor, Assert.Single(_series.Written).Value);
+        }
+    }
+
+    [Fact]
     public async Task ResourceMetricsSurviveBusyInstrumentsAndKeepRateBaselines()
     {
         _telemetryOptions.MaximumDashboardMetricRows = 128;

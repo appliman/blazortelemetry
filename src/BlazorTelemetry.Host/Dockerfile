@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.12-noble AS runtime
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 4317
@@ -12,7 +12,7 @@ RUN apt-get update \
     && mkdir -p /data \
     && chown -R $APP_UID:$APP_UID /data /app
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY . .
