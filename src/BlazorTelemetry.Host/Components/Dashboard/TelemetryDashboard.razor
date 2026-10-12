@@ -126,15 +126,21 @@
                 return;
             }
             var _selectedService = _service;
-            _fromUtc = fromUtc;
-            _toUtc = toUtc;
             var _view = _activeView;
+            if (_view != "dashboards")
+            {
+                _fromUtc = fromUtc;
+                _toUtc = toUtc;
+            }
             var _querySearch = _search;
             var _queryTrace = _selectedTraceId;
             var _queryLogLevel = _logLevel;
             var _queryRequestStatus = _requestStatus;
-            await LoadPanel(() => Repository.GetServices(fromUtc, toUtc, _lifetime.Token), _result => _services = _result.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray());
-            await LoadPanel(() => Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService), _result => _summary = _result with { Services = _result.Services.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray() });
+            await LoadPanel(() => Repository.GetServices(fromUtc, toUtc, _lifetime.Token), _result => _services = _result.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray(), _finishLoading: false);
+            if (_view != "dashboards")
+            {
+                await LoadPanel(() => Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService), _result => _summary = _result with { Services = _result.Services.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray() });
+            }
             if (_view is "logs" or "traces" or "metrics" or "requests")
             {
                 var kind = _view switch
@@ -186,11 +192,27 @@
             }
             else if (_view == "dashboards")
             {
-                await LoadPanel(() => Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token), _result => _dashboardTraces = _result.Items);
-                await LoadPanel(() => Repository.Query(new TelemetryQuery(TelemetryKind.Log, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token), _result => _dashboardLogs = _result.Items);
-                await LoadPanel(() => Repository.GetResourceMetrics(fromUtc, toUtc, _selectedService, _lifetime.Token), _result => _dashboardMetrics = _result);
-                await LoadPanel(() => Repository.GetDashboardBreakdown(fromUtc, _selectedService, HostEnvironment.ApplicationName, _lifetime.Token, toUtc), _result => _dashboardBreakdown = _result);
-                await LoadPanel(() => Repository.GetBlazorDashboardMetrics(fromUtc, _selectedService, _lifetime.Token, toUtc), _result => _blazorDashboard = _result);
+                await LoadPanel(async () =>
+                {
+                    var _summaryResult = await Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService);
+                    var _traces = await Repository.Query(new TelemetryQuery(TelemetryKind.Trace, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
+                    var _logs = await Repository.Query(new TelemetryQuery(TelemetryKind.Log, _selectedService, FromUtc: fromUtc, ToUtc: toUtc, Take: 200), _lifetime.Token);
+                    var _metrics = await Repository.GetResourceMetrics(fromUtc, toUtc, _selectedService, _lifetime.Token);
+                    var _breakdown = await Repository.GetDashboardBreakdown(fromUtc, _selectedService, HostEnvironment.ApplicationName, _lifetime.Token, toUtc);
+                    var _blazor = await Repository.GetBlazorDashboardMetrics(fromUtc, _selectedService, _lifetime.Token, toUtc);
+                    return (_summaryResult, _traces, _logs, _metrics, _breakdown, _blazor);
+                }, _result =>
+                {
+                    // Publish one application/period snapshot, including resource charts.
+                    _summary = _result._summaryResult with { Services = _result._summaryResult.Services.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray() };
+                    _dashboardTraces = _result._traces.Items;
+                    _dashboardLogs = _result._logs.Items;
+                    _dashboardMetrics = _result._metrics;
+                    _dashboardBreakdown = _result._breakdown;
+                    _blazorDashboard = _result._blazor;
+                    _fromUtc = fromUtc;
+                    _toUtc = toUtc;
+                });
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
@@ -202,7 +224,10 @@
         }
         finally
         {
-            _loading = false;
+            if (!_refreshRequested)
+            {
+                _loading = false;
+            }
             if (!_lifetime.IsCancellationRequested)
             {
                 StateHasChanged();
@@ -210,7 +235,7 @@
         }
     }
 
-    private async Task LoadPanel<T>(Func<Task<T>> _load, Action<T> _apply)
+    private async Task LoadPanel<T>(Func<Task<T>> _load, Action<T> _apply, bool _finishLoading = true)
     {
         if (_refreshRequested || _lifetime.IsCancellationRequested)
         {
@@ -224,7 +249,10 @@
             if (!_refreshRequested && !_lifetime.IsCancellationRequested)
             {
                 _apply(_result);
-                _loading = false;
+                if (_finishLoading)
+                {
+                    _loading = false;
+                }
                 StateHasChanged();
             }
         }
@@ -248,6 +276,15 @@
 
     private async Task ChangeFilters()
     {
+        _loading = true;
+        _summary = new(0, 0, 0, 0, 0, 0, null, null, []);
+        _page = new([], 0, false);
+        _series = [];
+        _dashboardTraces = [];
+        _dashboardLogs = [];
+        _dashboardMetrics = [];
+        _dashboardBreakdown = DashboardBreakdown.Empty;
+        _blazorDashboard = BlazorDashboardMetrics.Empty;
         _selectedTraceId = null;
         _selectedLog = null;
         _selectedSpan = null;
@@ -758,12 +795,18 @@
     <main class="bt-main">
         <header class="bt-toolbar">
             <div>
-                <h1>@ViewTitle()</h1>
-                <p>@ViewSubtitle()</p>
+                @if (_activeView != "dashboards")
+                {
+                    <h1>@ViewTitle()</h1>
+                    <p>@ViewSubtitle()</p>
+                }
                 <span class="bt-toolbar-health"><i></i> Collector active <small>OTLP · HTTP/protobuf</small></span>
             </div>
             <div class="bt-toolbar-actions">
-                <label class="bt-search"><span class="visually-hidden">Search</span><input @bind="_search" @bind:event="oninput" @onchange="Refresh" placeholder="Search telemetry" /></label>
+                @if (_activeView != "dashboards")
+                {
+                    <label class="bt-search"><span class="visually-hidden">Search</span><input @bind="_search" @bind:event="oninput" @onchange="Refresh" placeholder="Search telemetry" /></label>
+                }
                 <select @bind="_service" @bind:after="ChangeFilters" aria-label="Filter by application">
                     <option value="">All applications</option>
                     @if (!string.IsNullOrWhiteSpace(_service) && !_services.Contains(_service))
@@ -966,7 +1009,7 @@
         }
         else if (_activeView == "dashboards")
         {
-            <DefaultTelemetryDashboard Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" FromUtc="_fromUtc" ToUtc="_toUtc" />
+            <DefaultTelemetryDashboard @key="_service" Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" FromUtc="_fromUtc" ToUtc="_toUtc" />
         }
     </main>
 
