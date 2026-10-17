@@ -14,6 +14,7 @@ a { color: #76e4b8; }
 .auth-card p { color: #aebdc6; }
 .auth-label { color: #76e4b8; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .auth-help { margin: 1.5rem 0 0; }
+.user-edit-form .form-floating > label { color: var(--bs-body-color); }
 .key-page { max-width: 50rem; color: #e8edf5; }
 .key-page .form-control { background: #111820; border-color: #354453; color: #e8edf5; }
 .key-page .form-control:focus { background: #111820; color: #e8edf5; }
