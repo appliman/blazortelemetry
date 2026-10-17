@@ -120,7 +120,7 @@
         }
         @if (_ready)
         {
-            <EditForm Model="_user" OnValidSubmit="@(() => Save(false))" FormName="userEdit">
+            <EditForm Model="_user" OnValidSubmit="@(() => Save(false))" FormName="userEdit" class="user-edit-form">
                 <div class="form-floating mb-3">
                     <InputText disabled="@(!_interactiveReady)" id="identifier" class="form-control" placeholder="Identifier" @bind-Value="_user.Identifier" maxlength="256" autocomplete="off" />
                     <label for="identifier">Identifier</label>
