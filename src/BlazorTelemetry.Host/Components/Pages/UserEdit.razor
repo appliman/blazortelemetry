@@ -14,6 +14,7 @@
     public void Dispose()
     {
         _secret = null;
+        _customSecret = "";
         _lifetime.Cancel();
         _lifetime.Dispose();
     }
@@ -23,6 +24,7 @@
     private Guid _expectedVersion;
     private string? _error;
     private string? _secret;
+    private string _customSecret = "";
     private bool _ready;
     private bool _saved;
     private bool _busy;
@@ -41,6 +43,7 @@
     {
         _ready = false;
         _secret = null;
+        _customSecret = "";
         _saved = false;
         _error = null;
         if (Id is null)
@@ -74,12 +77,14 @@
         try
         {
             var _principal = (await Authentication.GetAuthenticationStateAsync()).User;
-            var _result = await Repository.Send(new SaveUserRequest(_user, reset, _expectedVersion, _principal), _lifetime.Token);
+            var _result = await Repository.Send(new SaveUserRequest(_user, reset, _expectedVersion, _principal,
+                _user.Id == 0 ? _customSecret : null), _lifetime.Token);
             _error = _result.HasError ? string.Join(" ", _result.BrokenRules.Select(rule => rule.Message)) : null;
             if (!_result.HasError)
             {
                 _expectedVersion = _user.SecurityVersion;
                 _secret = _result.Data;
+                _customSecret = "";
                 _saved = true;
             }
         }
@@ -120,6 +125,14 @@
                     <InputText disabled="@(!_interactiveReady)" id="identifier" class="form-control" placeholder="Identifier" @bind-Value="_user.Identifier" maxlength="256" autocomplete="off" />
                     <label for="identifier">Identifier</label>
                 </div>
+                @if (_user.Id == 0)
+                {
+                    <div class="form-floating mb-3">
+                        <InputText disabled="@(!_interactiveReady)" id="custom-secret" class="form-control" placeholder="Secret (optional)" type="password" @bind-Value="_customSecret" maxlength="36" autocomplete="off" spellcheck="false" aria-describedby="custom-secret-help" />
+                        <label for="custom-secret">Secret (optional)</label>
+                    </div>
+                    <p id="custom-secret-help">Enter a non-empty GUID to use your own secret, or leave blank to generate one automatically. The user must still set up their authenticator.</p>
+                }
                 <p>Changing the identifier requires a new authenticator setup and revokes existing sessions.</p>
                 <div class="form-check mb-3"><InputCheckbox disabled="@(!_interactiveReady)" id="active" class="form-check-input" @bind-Value="_user.IsActive" /><label class="form-check-label" for="active">Active</label></div>
                 <button class="btn btn-primary" type="submit" disabled="@(_busy || !_interactiveReady)">Save</button>
