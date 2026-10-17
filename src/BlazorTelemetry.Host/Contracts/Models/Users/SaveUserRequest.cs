@@ -5,4 +5,5 @@ using ChannelMediator;
 
 namespace BlazorTelemetry.Host.Contracts.Models.Users;
 
-public sealed record SaveUserRequest(TelemetryUser User, bool ResetSecret, Guid ExpectedVersion, ClaimsPrincipal Principal) : IRequest<QueryResult<string>>;
+public sealed record SaveUserRequest(TelemetryUser User, bool ResetSecret, Guid ExpectedVersion, ClaimsPrincipal Principal,
+    string? CustomSecret = null) : IRequest<QueryResult<string>>;

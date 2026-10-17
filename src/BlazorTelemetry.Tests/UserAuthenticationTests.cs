@@ -52,6 +52,88 @@ public sealed class UserAuthenticationTests : IDisposable
         Assert.Empty(Assert.Single(_list.Data!).ProtectedSecret);
     }
 
+    [Fact]
+    public async Task CustomSecretIsProtectedAndRequiresAuthenticatorActivation()
+    {
+        var _secret = Guid.NewGuid().ToString("D");
+        var _user = new TelemetryUser { Identifier = "Alice" };
+        var _result = await _save.Handle(new(_user, false, _user.SecurityVersion, _admin, " " + _secret.ToUpperInvariant() + " "), default);
+        Assert.False(_result.HasError);
+        Assert.Equal(_secret, _result.Data);
+        using var _context = _factory.CreateDbContext();
+        var _stored = await _context.Users.SingleAsync();
+        Assert.DoesNotContain(_secret, _stored.ProtectedSecret);
+        Assert.Null(_stored.ActivatedUtc);
+        Assert.Null(await _authentication.Authenticate(_user.Identifier, CurrentCode(_user, _secret), null, default));
+        var _uri = await _authentication.SetupUri(_user.Identifier, _secret, default);
+        Assert.Contains("secret=" + UserTotp.Base32(UserTotp.Key(Guid.Parse(_secret), _user.Identifier)), _uri);
+        Assert.NotNull(await _authentication.Authenticate(_user.Identifier, CurrentCode(_user, _secret), _secret, default));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.NotNull(await _authentication.Authenticate(_user.Identifier, CurrentCode(_user, _secret), null, default));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task BlankCustomSecretKeepsAutomaticGeneration(string? customSecret)
+    {
+        var _user = new TelemetryUser { Identifier = "Alice" };
+        var _result = await _save.Handle(new(_user, false, _user.SecurityVersion, _admin, customSecret), default);
+        Assert.False(_result.HasError);
+        Assert.True(Guid.TryParse(_result.Data, out var _secret));
+        Assert.NotEqual(Guid.Empty, _secret);
+        Assert.NotNull(await _authentication.SetupUri(_user.Identifier, _result.Data!, default));
+    }
+
+    [Theory]
+    [InlineData("123456")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    [InlineData("<script>alert(1)</script>")]
+    [InlineData("&lt;script&gt;alert(1)&lt;/script&gt;")]
+    [InlineData("11111111-1111-1111-1111-111111111111-extra")]
+    public async Task InvalidCustomSecretDoesNotCreateUser(string customSecret)
+    {
+        var _user = new TelemetryUser { Identifier = "Alice" };
+        var _result = await _save.Handle(new(_user, false, _user.SecurityVersion, _admin, customSecret), default);
+        Assert.True(_result.HasError);
+        Assert.Equal("CustomSecret", Assert.Single(_result.BrokenRules).PropertyName);
+        Assert.Null(_result.Data);
+        using var _context = _factory.CreateDbContext();
+        Assert.Empty(await _context.Users.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("anonymous")]
+    [InlineData("reader")]
+    [InlineData("forged-admin")]
+    public async Task OnlyConfiguredAdministratorCanCreateUserWithCustomSecret(string actor)
+    {
+        var _principal = actor == "anonymous" ? new ClaimsPrincipal() : new ClaimsPrincipal(new ClaimsIdentity(
+            [new(ClaimTypes.NameIdentifier, "unknown"), new(ClaimTypes.Role, actor == "reader" ? "Reader" : "Administrator")], "test"));
+        var _user = new TelemetryUser { Identifier = "Alice" };
+        var _result = await _save.Handle(new(_user, false, _user.SecurityVersion, _principal, Guid.NewGuid().ToString("D")), default);
+        Assert.True(_result.HasError);
+        Assert.Null(_result.Data);
+        using var _context = _factory.CreateDbContext();
+        Assert.Empty(await _context.Users.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CustomSecretCannotReplaceExistingUserSecret(bool reset)
+    {
+        var (_user, _secret) = await Create("Alice");
+        var _expectedVersion = _user.SecurityVersion;
+        var _result = await _save.Handle(new(_user, reset, _expectedVersion, _admin, Guid.NewGuid().ToString("D")), default);
+        Assert.True(_result.HasError);
+        using var _context = _factory.CreateDbContext();
+        var _stored = await _context.Users.SingleAsync();
+        Assert.Equal(_expectedVersion, _stored.SecurityVersion);
+        Assert.NotNull(await _authentication.SetupUri(_user.Identifier, _secret, default));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData(" ADMIN ")]

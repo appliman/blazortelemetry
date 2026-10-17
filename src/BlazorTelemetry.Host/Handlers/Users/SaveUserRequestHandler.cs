@@ -20,6 +20,19 @@ public sealed class SaveUserRequestHandler(IDbContextFactory<TelemetryDbContext>
         }
         try
         {
+            Guid? _customSecret = null;
+            if (!string.IsNullOrWhiteSpace(request.CustomSecret))
+            {
+                if (request.User.Id != 0)
+                {
+                    return new() { BrokenRules = [new("validation", "CustomSecret", "A custom secret can only be provided when creating a user.")] };
+                }
+                if (!Guid.TryParseExact(request.CustomSecret.Trim(), "D", out var _providedSecret) || _providedSecret == Guid.Empty)
+                {
+                    return new() { BrokenRules = [new("validation", "CustomSecret", "Enter a non-empty GUID in xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format, or leave the secret blank to generate one automatically.")] };
+                }
+                _customSecret = _providedSecret;
+            }
             request.User.Identifier = request.User.Identifier.Trim();
             var _validation = await validator.ValidateAsync(request.User, cancellationToken);
             if (!_validation.IsValid)
@@ -41,7 +54,7 @@ public sealed class SaveUserRequestHandler(IDbContextFactory<TelemetryDbContext>
             string? _secret = null;
             if (_reset)
             {
-                var _guid = Guid.NewGuid();
+                var _guid = _customSecret ?? Guid.NewGuid();
                 _secret = _guid.ToString("D");
                 _user.ProtectedSecret = authentication.Protect(_guid);
                 _user.ActivatedUtc = null;
