@@ -12,7 +12,8 @@ public sealed class UserAuthenticationService(
     BlazorAuthConfiguration settings,
     UserAttemptLimiter limiter,
     TimeProvider timeProvider,
-    ILogger<UserAuthenticationService>? logger = null)
+    ILogger<UserAuthenticationService>? logger = null,
+    AutoLoginKeyService? autoLoginKeys = null)
 {
     public const string USER_ID = "telemetry_user_id";
     public const string SECURITY_VERSION = "telemetry_security_version";
@@ -29,6 +30,10 @@ public sealed class UserAuthenticationService(
 
     public async Task<bool> IsCurrent(ClaimsPrincipal principal, CancellationToken cancellationToken)
     {
+        if (principal.HasClaim(claim => claim.Type == AutoLoginKeyService.KEY_SOURCE))
+        {
+            return autoLoginKeys is not null && await autoLoginKeys.IsCurrent(principal, cancellationToken);
+        }
         if (IsAdministrator(principal))
         {
             return true;
