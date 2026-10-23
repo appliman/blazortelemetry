@@ -22,6 +22,8 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<UserAttemptLimiter>();
 builder.Services.AddScoped<UserAuthenticationService>();
+builder.Services.AddScoped<AutoLoginKeyService>();
+builder.Services.AddSingleton<AutoLoginCodeStore>();
 builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider, UserRevalidatingAuthenticationStateProvider>();
 builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, UserSessionAuthorizationHandler>();
 
@@ -108,7 +110,7 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseWhen(
-	context => !context.Request.Path.StartsWithSegments("/v1") && !context.Request.Path.StartsWithSegments("/blazor-telemetry") && !context.Request.Path.StartsWithSegments("/mcp"),
+	context => !context.Request.Path.StartsWithSegments("/v1") && !context.Request.Path.StartsWithSegments("/blazor-telemetry") && !context.Request.Path.StartsWithSegments("/mcp") && !context.Request.Path.StartsWithSegments("/api/auth/auto-login"),
 	branch => branch.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true));
 app.UseBlazorTelemetry();
 app.UseHttpsRedirection();
