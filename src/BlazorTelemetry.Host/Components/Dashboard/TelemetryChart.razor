@@ -10,6 +10,15 @@
     public IReadOnlyList<string> Labels { get; set; } = [];
 
     [Parameter]
+    public IReadOnlyList<long> Timestamps { get; set; } = [];
+
+    [Parameter]
+    public DateTimeOffset? FromUtc { get; set; }
+
+    [Parameter]
+    public DateTimeOffset? ToUtc { get; set; }
+
+    [Parameter]
     public IReadOnlyList<double> Values { get; set; } = [];
 
     [Parameter]
@@ -45,7 +54,8 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./telemetry-chart.js");
-        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, SecondaryValues, SeriesLabel, SecondarySeriesLabel, Color, SecondaryColor, Unit, Type, ShowValues);
+        await _module.InvokeVoidAsync("render", _elementId, Labels, Values, SecondaryValues, SeriesLabel, SecondarySeriesLabel, Color, SecondaryColor, Unit, Type, ShowValues,
+            Timestamps, FromUtc?.ToUnixTimeMilliseconds(), ToUtc?.ToUnixTimeMilliseconds());
     }
 
     public async ValueTask DisposeAsync()

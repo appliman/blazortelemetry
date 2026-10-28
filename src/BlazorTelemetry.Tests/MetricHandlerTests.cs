@@ -186,8 +186,34 @@ public sealed partial class TelemetryCqrsTests
         // Each counter retains the predecessor needed to calculate its first visible rate.
         foreach (var _name in ResourceMetricNames.All)
         {
-            Assert.Equal(5, _metrics.Count(_item => _item.Name == _name));
+            Assert.Equal(_name == "http.server.active_requests" ? 8 : 5, _metrics.Count(_item => _item.Name == _name));
         }
+    }
+
+    [Fact]
+    public async Task ActiveRequestMetricsCoverTheSelectedPeriodWithinTheSharedBudget()
+    {
+        _telemetryOptions.MaximumDashboardMetricRows = 128;
+        var _from = DateTimeOffset.Parse("2026-09-22T10:00:00Z");
+        var _to = _from.AddHours(1);
+        var _items = Enumerable.Range(-1, 362).Select(_index =>
+            ProcessMetricSeriesTests.Item("http.server.active_requests", _from.AddSeconds(_index * 10), _index)).ToArray();
+        await _mediator.Store(_items, CancellationToken.None);
+        var _otherApplication = ProcessMetricSeriesTests.Item("http.server.active_requests", _to.AddSeconds(-1), 999, "other");
+        _otherApplication.ServiceName = "other-app";
+        await _mediator.Store([_otherApplication], CancellationToken.None);
+
+        var _metrics = await _mediator.GetResourceMetrics(_from, _to, "app", CancellationToken.None);
+        var _instrumentBudget = 128 / ResourceMetricNames.All.Count;
+
+        Assert.InRange(_metrics.Count, 1, _instrumentBudget);
+        Assert.Contains(_metrics, _item => _item.TimestampUtc < _from.AddMinutes(10));
+        Assert.Contains(_metrics, _item => _item.TimestampUtc == _to);
+        Assert.All(_metrics, _item =>
+        {
+            Assert.Equal("app", _item.ServiceName);
+            Assert.InRange(_item.TimestampUtc, _from, _to);
+        });
     }
 
     [Fact]

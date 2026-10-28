@@ -54,6 +54,31 @@ internal sealed class GetResourceMetricsRequestHandler(
                 continue;
             }
             var _instrument = _source.Where(_item => _item.Name == _name);
+            if (_name == "http.server.active_requests" && toUtc > fromUtc)
+            {
+                if (!await _instrument.AnyAsync(_item => _item.TimestampUtc >= fromUtc, cancellationToken))
+                {
+                    continue;
+                }
+                var _durationTicks = (toUtc - fromUtc).Ticks;
+                var _bucketCount = (int)Math.Min(Math.Min(40, _budget), _durationTicks);
+                for (var _bucket = 0; _bucket < _bucketCount; _bucket++)
+                {
+                    var _start = fromUtc.AddTicks(_durationTicks / _bucketCount * _bucket);
+                    var _end = _bucket == _bucketCount - 1
+                        ? toUtc
+                        : fromUtc.AddTicks(_durationTicks / _bucketCount * (_bucket + 1));
+                    var _isLastBucket = _bucket == _bucketCount - 1;
+                    var _bucketBudget = _budget / _bucketCount + (_bucket < _budget % _bucketCount ? 1 : 0);
+                    var _samples = await _instrument
+                        .Where(_item => _item.TimestampUtc >= _start
+                            && (_item.TimestampUtc < _end || _isLastBucket && _item.TimestampUtc == _end))
+                        .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
+                        .Take(_bucketBudget).Select(METRIC_PROJECTION).ToListAsync(cancellationToken);
+                    _result.AddRange(_samples);
+                }
+                continue;
+            }
             var _pointsQuery = _instrument.Where(_item => _item.TimestampUtc >= fromUtc)
                 .OrderByDescending(_item => _item.TimestampUtc).ThenByDescending(_item => _item.Id)
                 .Take((_budget + 1) / 2);
