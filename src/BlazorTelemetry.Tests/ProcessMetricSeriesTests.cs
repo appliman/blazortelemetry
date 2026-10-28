@@ -6,6 +6,46 @@ namespace BlazorTelemetry.Tests;
 public sealed class ProcessMetricSeriesTests
 {
     [Fact]
+    public void ActiveRequestsUsesRealMeasurementsAcrossTheWholeSelectedPeriod()
+    {
+        var _from = DateTimeOffset.Parse("2026-10-28T10:00:00Z");
+        var _to = _from.AddHours(1);
+        var _items = Enumerable.Range(0, 61)
+            .Select(_index => Item("http.server.active_requests", _from.AddMinutes(_index), _index, _unit: "{request}"))
+            .ToList();
+        _items.Add(Item("http.server.active_requests", _from.AddTicks(-1), 1000));
+        _items.Add(Item("http.server.active_requests", _to.AddTicks(1), 1000));
+        _items.Add(Item("http.server.request.duration", _from, 1000));
+        _items.Add(Item("http.server.active_requests", _from.AddSeconds(1), double.NaN));
+
+        var _series = ProcessMetricSeries.ActiveRequests(_items, _from, _to);
+
+        Assert.Equal(61, _series.Count);
+        Assert.Equal(_from, _series[0].TimestampUtc);
+        Assert.Equal(0, _series[0].Value);
+        Assert.Equal(_to, _series[^1].TimestampUtc);
+        Assert.Equal(60, _series[^1].Value);
+    }
+
+    [Fact]
+    public void ActiveRequestsAggregatesLatestSamplePerSeriesWithoutCountingTraces()
+    {
+        var _from = DateTimeOffset.Parse("2026-10-28T10:00:00Z");
+        TelemetryItem[] _items = [
+            Item("http.server.active_requests", _from, 100, "a"),
+            Item("http.server.active_requests", _from.AddMilliseconds(100), 2, "a"),
+            Item("http.server.active_requests", _from.AddMilliseconds(200), 3, "b"),
+            new() { Kind = TelemetryKind.Trace, TimestampUtc = _from, Name = "GET /" }
+        ];
+
+        var _point = Assert.Single(ProcessMetricSeries.ActiveRequests(_items, _from, _from.AddHours(1)));
+
+        Assert.Equal(5, _point.Value);
+        Assert.Equal(_from.AddMilliseconds(200), _point.TimestampUtc);
+        Assert.Empty(ProcessMetricSeries.ActiveRequests([_items[^1]], _from, _from.AddHours(1)));
+    }
+
+    [Fact]
     public void CalculatesRatesPerProcessAndPerDirectionBeforeAggregation()
     {
         var _from = DateTimeOffset.Parse("2026-09-22T10:00:00Z");

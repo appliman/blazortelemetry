@@ -35,7 +35,8 @@
     private IReadOnlyList<ChartPoint> CurrentConnections => BlazorMetrics.ConnectedCircuitsSeries.Count > 0
         ? BlazorMetrics.ConnectedCircuitsSeries.Select(point => new ChartPoint(point.TimestampUtc.ToLocalTime().ToString("HH:mm:ss"), point.Value)).ToArray()
         : MetricSeries("connection", "active", "current");
-    private IReadOnlyList<ChartPoint> CurrentRequests => MetricSeries("request", "active", "current");
+    private IReadOnlyList<MetricSeriesPoint> CurrentRequests => _activeRequests;
+    private IReadOnlyList<MetricSeriesPoint> _activeRequests = [];
     private ProcessMetricSeries _processMetrics = ProcessMetricSeries.Empty;
     private IReadOnlyList<TelemetryItem>? _processedMetrics;
     private DateTimeOffset _processedFromUtc;
@@ -140,6 +141,7 @@
         if (!ReferenceEquals(_processedMetrics, Metrics) || _processedFromUtc != FromUtc || _processedToUtc != ToUtc)
         {
             _processMetrics = ProcessMetricSeries.Create(Metrics, FromUtc, ToUtc);
+            _activeRequests = ProcessMetricSeries.ActiveRequests(Metrics, FromUtc, ToUtc);
             _processedMetrics = Metrics;
             _processedFromUtc = FromUtc;
             _processedToUtc = ToUtc;
@@ -314,7 +316,7 @@
             <article class="bt-monitor-card bt-live-chart">
                 <header><h2>Active requests</h2><strong>@(CurrentRequests.LastOrDefault()?.Value.ToString("N0") ?? "—")</strong></header>
                 @if (CurrentRequests.Count == 0) { <div class="bt-no-data compact">No data</div> }
-                else { <TelemetryChart Labels="CurrentRequests.Select(point => point.Label).ToArray()" Values="CurrentRequests.Select(point => point.Value).ToArray()" Color="#79d279" Height="205" /> }
+                else { <TelemetryChart Timestamps="CurrentRequests.Select(point => point.TimestampUtc.ToUnixTimeMilliseconds()).ToArray()" FromUtc="FromUtc" ToUtc="ToUtc" Values="CurrentRequests.Select(point => point.Value).ToArray()" SeriesLabel="Active requests" Color="#79d279" Height="205" /> }
             </article>
         </div>
 
