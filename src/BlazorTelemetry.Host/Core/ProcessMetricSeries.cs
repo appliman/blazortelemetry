@@ -11,6 +11,19 @@ public sealed record ProcessMetricSeries(
 {
     public static ProcessMetricSeries Empty { get; } = new([], [], [], [], [], [], false);
 
+    public static IReadOnlyList<MetricSeriesPoint> ActiveRequests(IReadOnlyList<TelemetryItem> _items, DateTimeOffset _fromUtc, DateTimeOffset _toUtc)
+    {
+        return _items.Where(_item => _item.Name == "http.server.active_requests"
+                && _item.TimestampUtc >= _fromUtc && _item.TimestampUtc <= _toUtc
+                && _item.NumericValue is double _value && double.IsFinite(_value))
+            .GroupBy(_item => (Series: MetricCounter.SeriesKey(_item), Second: _item.TimestampUtc.ToUnixTimeSeconds()))
+            .Select(_group => _group.MaxBy(_item => _item.TimestampUtc)!)
+            .GroupBy(_item => _item.TimestampUtc.ToUnixTimeSeconds())
+            .OrderBy(_group => _group.Key)
+            .Select(_group => new MetricSeriesPoint(_group.Max(_item => _item.TimestampUtc), _group.Sum(_item => _item.NumericValue!.Value)))
+            .ToArray();
+    }
+
     public static ProcessMetricSeries Create(IReadOnlyList<TelemetryItem> _items, DateTimeOffset _fromUtc, DateTimeOffset _toUtc)
     {
         var _cpu = new List<MetricSeriesPoint>();
