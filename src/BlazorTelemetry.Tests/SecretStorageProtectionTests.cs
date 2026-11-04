@@ -8,23 +8,43 @@ namespace BlazorTelemetry.Tests;
 
 public sealed class SecretStorageProtectionTests
 {
-    [Fact]
-    public void ProductionRequiresAnExternalCertificateAndKeyDirectory()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CertificateIsOptionalAndDefaultKeysSurviveRestart(bool development)
     {
-        var configuration = new ConfigurationBuilder().Build();
-        Assert.Throws<InvalidOperationException>(() => SecretStorageProtection.Create(configuration.GetSection("SecretStorage"), false, "Data Source=Data/telemetry.db"));
+        var directory = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-storage-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var configuration = new ConfigurationBuilder().Build();
+            var connectionString = $"Data Source={Path.Combine(directory, "telemetry.db")}";
+            string encrypted;
+            using (var storage = SecretStorageProtection.Create(configuration.GetSection("SecretStorage"), development, connectionString))
+            {
+                encrypted = storage.Provider.CreateProtector("test").Protect("persistent-secret");
+            }
+
+            using var restarted = SecretStorageProtection.Create(configuration.GetSection("SecretStorage"), development, connectionString);
+            Assert.Equal("persistent-secret", restarted.Provider.CreateProtector("test").Unprotect(encrypted));
+            if (!development || !OperatingSystem.IsWindows())
+            {
+                Assert.NotEmpty(Directory.GetFiles(Path.Combine(directory, "secret-storage-keys"), "*.xml"));
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void RejectsCertificatesOrKeyDirectoriesInsideDatabaseDirectory(bool nestedCertificate)
+    [Fact]
+    public void RejectsCertificateInsideDatabaseDirectory()
     {
         var databaseDirectory = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-storage-{Guid.NewGuid():N}");
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["SecretStorage:CertificatePath"] = nestedCertificate ? Path.Combine(databaseDirectory, "certificate.pfx") : Path.Combine(Path.GetTempPath(), "certificate.pfx"),
-            ["SecretStorage:KeyDirectory"] = nestedCertificate ? Path.Combine(Path.GetTempPath(), "keys") : Path.Combine(databaseDirectory, "keys")
+            ["SecretStorage:CertificatePath"] = Path.Combine(databaseDirectory, "certificate.pfx")
         }).Build();
 
         Assert.Throws<InvalidOperationException>(() => SecretStorageProtection.Create(configuration.GetSection("SecretStorage"), false, $"Data Source={Path.Combine(databaseDirectory, "telemetry.db")}"));

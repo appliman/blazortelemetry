@@ -16,22 +16,13 @@ public sealed class SecretStorageProtection(IDataProtectionProvider provider) : 
         var certificatePath = configuration["CertificatePath"];
         var keyDirectory = configuration["KeyDirectory"];
         var databaseDirectory = Path.GetDirectoryName(Path.GetFullPath(new SqliteConnectionStringBuilder(connectionString).DataSource))!;
-        if (string.IsNullOrWhiteSpace(certificatePath) && (!development || !OperatingSystem.IsWindows()))
-        {
-            throw new InvalidOperationException("SecretStorage:CertificatePath must identify an external private-key certificate.");
-        }
-
         if (string.IsNullOrWhiteSpace(keyDirectory))
         {
-            if (!development)
-            {
-                throw new InvalidOperationException("SecretStorage:KeyDirectory must identify a persistent directory outside the database directory.");
-            }
-
-            keyDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BlazorTelemetry", "SecretStorageKeys");
+            keyDirectory = development && OperatingSystem.IsWindows()
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BlazorTelemetry", "SecretStorageKeys")
+                : Path.Combine(databaseDirectory, "secret-storage-keys");
         }
 
-        ValidateExternalPath(keyDirectory, databaseDirectory);
         if (!string.IsNullOrWhiteSpace(certificatePath))
         {
             ValidateExternalPath(certificatePath, databaseDirectory);
@@ -57,11 +48,6 @@ public sealed class SecretStorageProtection(IDataProtectionProvider provider) : 
             }
         }
 
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException("Local secret storage without a certificate requires Windows DPAPI.");
-        }
-
         var localProvider = DataProtectionProvider.Create(new DirectoryInfo(keyDirectory), builder =>
         {
             builder.SetApplicationName("BlazorTelemetry.SecretStorage.v1");
@@ -71,7 +57,7 @@ public sealed class SecretStorageProtection(IDataProtectionProvider provider) : 
             }
             else
             {
-                throw new PlatformNotSupportedException("Local secret storage without a certificate requires Windows DPAPI.");
+                Directory.CreateDirectory(keyDirectory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
         });
         return Validate(new SecretStorageProtection(localProvider));

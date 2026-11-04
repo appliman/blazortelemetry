@@ -12,9 +12,6 @@ services:
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: "false"
       DOTNET_RUNNING_IN_CONTAINER: "true"
       TZ: Europe/Paris
-      SecretStorage__CertificatePath: /run/secrets/telemetry-storage.pfx
-      SecretStorage__CertificatePassword: ${SECRET_STORAGE_CERTIFICATE_PASSWORD:-}
-      SecretStorage__KeyDirectory: /secret-storage-keys
       ReverseProxy__KnownNetworks__0: ${TRUSTED_PROXY_NETWORK:?Set TRUSTED_PROXY_NETWORK to the reverse proxy subnet in CIDR notation}
       Blazor2fa__AllowedUserLogins__0: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
       Blazor2fa__SecretKey: ${BLAZOR2FA_SECRET_KEY:?Set BLAZOR2FA_SECRET_KEY}
@@ -25,8 +22,6 @@ services:
       - "8080"
       - "4317"
     volumes:
-      - ${SECRET_STORAGE_CERTIFICATE_PATH:?Set SECRET_STORAGE_CERTIFICATE_PATH to an external PFX file}:/run/secrets/telemetry-storage.pfx:ro
-      - ${SECRET_STORAGE_KEY_PATH:?Set SECRET_STORAGE_KEY_PATH to a separate persistent key directory}:/secret-storage-keys
       - ${DATA_PATH:-/var/storeroot/blazor-telemetry/staging}:/data
     networks:
       - traefik
