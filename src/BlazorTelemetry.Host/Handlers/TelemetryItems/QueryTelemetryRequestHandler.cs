@@ -41,7 +41,15 @@ internal sealed class QueryTelemetryRequestHandler(
             source = source.Where(_item => _item.Kind == TelemetryKind.Request
                 && _item.HttpMethod != null && _item.HttpMethod.Trim() != string.Empty
                 && _item.HttpMethod.Trim() != "—" && _item.HttpMethod != "Blazor navigation"
-                && _item.ClientAddress != null && _item.ClientAddress.Trim() != string.Empty && _item.ClientAddress.Trim() != "—");
+                && (_item.SpanKind == "Client"
+                    || (_item.ClientAddress != null && _item.ClientAddress.Trim() != string.Empty && _item.ClientAddress.Trim() != "—")));
+        }
+
+        if (query.IsOutgoingRequest.HasValue)
+        {
+            source = query.IsOutgoingRequest.Value
+                ? source.Where(_item => _item.Kind == TelemetryKind.Request && _item.SpanKind == "Client")
+                : source.Where(_item => _item.Kind == TelemetryKind.Request && _item.SpanKind != "Client");
         }
 
         if (query.Kind.HasValue)

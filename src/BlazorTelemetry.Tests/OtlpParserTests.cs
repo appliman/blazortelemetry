@@ -114,6 +114,77 @@ public sealed class OtlpParserTests
         Assert.Contains("External request agent", externalRequest.AttributesJson);
     }
 
+    [Theory]
+    [InlineData("http.request.method", "url.full", "http.response.status_code")]
+    [InlineData("http.method", "http.url", "http.status_code")]
+    public void ParseTracesProjectsHttpClientSpansAsOutgoingRequests(string _methodAttribute, string _urlAttribute, string _statusAttribute)
+    {
+        var _span = new Span
+        {
+            Name = "POST",
+            Kind = Span.Types.SpanKind.Client,
+            TraceId = ByteString.CopyFrom(Convert.FromHexString("00112233445566778899AABBCCDDEEFF")),
+            SpanId = ByteString.CopyFrom(Convert.FromHexString("0011223344556677")),
+            StartTimeUnixNano = 1_700_000_000_000_000_000,
+            EndTimeUnixNano = 1_700_000_000_125_000_000,
+            Attributes =
+            {
+                new KeyValue { Key = _methodAttribute, Value = new AnyValue { StringValue = "POST" } },
+                new KeyValue { Key = _urlAttribute, Value = new AnyValue { StringValue = "https://payments.example.com/charges" } },
+                new KeyValue { Key = _statusAttribute, Value = new AnyValue { IntValue = 201 } },
+                new KeyValue { Key = "server.address", Value = new AnyValue { StringValue = "payments.example.com" } }
+            }
+        };
+        var _request = new ExportTraceServiceRequest
+        {
+            ResourceSpans = { new ResourceSpans { Resource = CreateResource(), ScopeSpans = { new ScopeSpans { Spans = { _span } } } } }
+        };
+
+        var _items = _parser.ParseTraces(_request, null);
+
+        Assert.Equal(2, _items.Count);
+        var _trace = Assert.Single(_items, _item => _item.Kind == TelemetryKind.Trace);
+        var _outgoing = Assert.Single(_items, _item => _item.Kind == TelemetryKind.Request);
+        Assert.Equal("checkout", _outgoing.ServiceName);
+        Assert.Equal("Client", _outgoing.SpanKind);
+        Assert.Equal("OTLP client span", _outgoing.Source);
+        Assert.Equal("POST", _outgoing.Body);
+        Assert.Equal("https://payments.example.com/charges", _outgoing.Name);
+        Assert.Equal(201, _outgoing.StatusCode);
+        Assert.Equal(125, _outgoing.DurationMs);
+        Assert.Equal(_trace.TraceId, _outgoing.TraceId);
+        Assert.Equal(_trace.SpanId, _outgoing.SpanId);
+        Assert.Equal(_outgoing.Fingerprint, Assert.Single(_parser.ParseTraces(_request, null), _item => _item.Kind == TelemetryKind.Request).Fingerprint);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    [InlineData("—")]
+    public void ParseTracesDoesNotProjectNonHttpClientSpansAsRequests(string? _method)
+    {
+        var _span = new Span
+        {
+            Name = "SELECT orders",
+            Kind = Span.Types.SpanKind.Client,
+            Attributes = { new KeyValue { Key = "db.system.name", Value = new AnyValue { StringValue = "sqlite" } } }
+        };
+        if (_method is not null)
+        {
+            _span.Attributes.Add(new KeyValue { Key = "http.request.method", Value = new AnyValue { StringValue = _method } });
+        }
+        var _request = new ExportTraceServiceRequest
+        {
+            ResourceSpans = { new ResourceSpans { ScopeSpans = { new ScopeSpans { Spans = { _span } } } } }
+        };
+
+        var _item = Assert.Single(_parser.ParseTraces(_request, "api"));
+
+        Assert.Equal(TelemetryKind.Trace, _item.Kind);
+        Assert.Equal("Client", _item.SpanKind);
+    }
+
     [Fact]
     public void ParseMetricsPreservesGaugeValue()
     {

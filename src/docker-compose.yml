@@ -17,12 +17,17 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       DOTNET_RUNNING_IN_CONTAINER: "true"
       TZ: Europe/Paris
+      SecretStorage__CertificatePath: /run/secrets/telemetry-storage.pfx
+      SecretStorage__CertificatePassword: ${SECRET_STORAGE_CERTIFICATE_PASSWORD:-}
+      SecretStorage__KeyDirectory: /secret-storage-keys
       Blazor2fa__AllowedUserLogins__0: ${BLAZOR_TELEMETRY_ADMIN_EMAIL:?Set BLAZOR_TELEMETRY_ADMIN_EMAIL}
       Blazor2fa__SecretKey: ${BLAZOR2FA_SECRET_KEY:?Set BLAZOR2FA_SECRET_KEY}
       Blazor2fa__Issuer: ${BLAZOR2FA_ISSUER:-BlazorTelemetry}
       Blazor2fa__ApplicationName: ${BLAZOR2FA_APPLICATION_NAME:-Local Administrator}
-      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-false}
+      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-true}
     volumes:
+      - ${SECRET_STORAGE_CERTIFICATE_PATH:?Set SECRET_STORAGE_CERTIFICATE_PATH to an external PFX file}:/run/secrets/telemetry-storage.pfx:ro
+      - ${SECRET_STORAGE_KEY_PATH:?Set SECRET_STORAGE_KEY_PATH to a separate persistent key directory}:/secret-storage-keys
       - blazor-telemetry-data:/data
 
 volumes:

@@ -224,7 +224,8 @@ public sealed partial class TelemetryCqrsTests
             await _context.GetService<IMigrator>().MigrateAsync(PREVIOUS_MIGRATION);
             _context.DataProtectionKeys.Add(new DataProtectionKey { FriendlyName = "key", Xml = "<key />" });
             _context.Dashboards.Add(new DashboardDefinition { Name = "dashboard" });
-            _context.IngestionApplications.Add(new IngestionApplication { Name = "app", KeyHash = "hash" });
+            // Seed the historical schema without using properties introduced by later migrations.
+            await _context.Database.ExecuteSqlRawAsync("INSERT INTO IngestionApplications (Name,KeyHash,KeyPrefix,IsActive,IsMcpReadKey,CreatedUtc,UsageCount) VALUES ('app','hash','',1,0,0,0)");
             _context.AlertRules.Add(new AlertRule { Name = "rule" });
             _context.Incidents.Add(new Incident { RuleName = "rule" });
             _context.NotificationDeliveries.Add(new NotificationDelivery { EventKey = "event" });

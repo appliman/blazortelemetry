@@ -45,6 +45,7 @@ internal sealed class RotateIngestionApplicationRequestHandler(
         oldKey.RevokedUtc = now;
         replacement.Name = oldKey.Name;
         replacement.IsMcpReadKey = oldKey.IsMcpReadKey;
+        replacement.AllowAutoLogin = oldKey.AllowAutoLogin;
         replacement.ExpiresUtc = oldKey.ExpiresUtc > now ? oldKey.ExpiresUtc : null;
         var validation = await validator.ValidateAsync(replacement, cancellationToken);
         if (!validation.IsValid)

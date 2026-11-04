@@ -16,7 +16,7 @@ public static class OtlpEndpointRouteBuilderExtensions
         endpoints.MapGrpcService<OtlpLogsGrpcService>();
         endpoints.MapGrpcService<OtlpTracesGrpcService>();
         endpoints.MapGrpcService<OtlpMetricsGrpcService>();
-        endpoints.MapGet("/blazor-telemetry/health", GetHealth).AllowAnonymous();
+        endpoints.MapGet("/blazor-telemetry/health", GetHealth).RequireAuthorization("BlazorTelemetryReader");
         return endpoints;
     }
 

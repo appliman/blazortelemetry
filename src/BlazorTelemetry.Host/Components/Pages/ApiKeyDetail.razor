@@ -58,6 +58,27 @@
         await OnParametersSetAsync();
         await OnChanged.InvokeAsync();
     }
+
+    private async Task SavePermissions()
+    {
+        if (_application is null)
+        {
+            return;
+        }
+
+        var result = await Repository.Send(new SetIngestionApplicationAutoLoginRequest(_application.Id, _application.AllowAutoLogin), CancellationToken.None);
+        if (result.HasError)
+        {
+            _error = string.Join(" ", result.BrokenRules.Select(rule => rule.Message));
+            return;
+        }
+
+        _error = null;
+        _message = result.ChangeCount == 0 ? "This key is no longer active. Its permissions were not changed."
+            : "Auto-login permission updated. Existing auto-login sessions are revalidated against this permission.";
+        await OnParametersSetAsync();
+        await OnChanged.InvokeAsync();
+    }
 }
 
 <div class="key-page">
@@ -94,6 +115,13 @@
         }
         @if (_application.IsActive)
         {
+            <EditForm Model="_application" OnValidSubmit="SavePermissions" class="mb-3">
+                <div class="form-check mb-3">
+                    <InputCheckbox id="allow-auto-login" class="form-check-input" @bind-Value="_application.AllowAutoLogin" />
+                    <label class="form-check-label" for="allow-auto-login">Allow dashboard auto-login (read access to all applications)</label>
+                </div>
+                <button type="submit" class="btn btn-secondary">Save permissions</button>
+            </EditForm>
             <div class="d-flex gap-2">
                 <button type="button" class="btn btn-primary" @onclick="Rotate">Rotate key</button>
                 <button type="button" class="btn btn-danger" @onclick="Revoke">Revoke key</button>

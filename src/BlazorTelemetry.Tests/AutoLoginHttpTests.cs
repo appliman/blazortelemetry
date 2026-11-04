@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using BlazorTelemetry.AspNetCore;
 using BlazorTelemetry.Core;
@@ -28,7 +30,7 @@ public sealed class AutoLoginHttpTests : IAsyncLifetime
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"telemetry-auto-login-http-{Guid.NewGuid():N}.db");
     private readonly TestTimeProvider _clock = new();
     private readonly BlazorTelemetryOptions _options = new();
-    private readonly BlazorAuthConfiguration _settings = new() { AllowedUserLogins = ["test-admin"], CookieDurationInDays = 15 };
+    private readonly BlazorAuthConfiguration _settings = new() { AllowedUserLogins = ["test-admin"], SecretKey = "test-only-admin-secret", CookieDurationInDays = 15 };
     private readonly (string PlainText, string Hash, string Prefix) _generated = IngestionKeyGenerator.Generate();
     private IDbContextFactory<TelemetryDbContext> _factory = null!;
     private WebApplication _app = null!;
@@ -44,7 +46,7 @@ public sealed class AutoLoginHttpTests : IAsyncLifetime
         await using (var _context = await _factory.CreateDbContextAsync())
         {
             await _context.Database.EnsureCreatedAsync();
-            var _key = new IngestionApplication { Name = "HTTP test key", KeyHash = _generated.Hash, KeyPrefix = _generated.Prefix };
+            var _key = new IngestionApplication { Name = "HTTP test key", KeyHash = _generated.Hash, KeyPrefix = _generated.Prefix, AllowAutoLogin = true };
             _context.IngestionApplications.Add(_key);
             await _context.SaveChangesAsync();
             _keyId = _key.Id;
@@ -96,7 +98,9 @@ public sealed class AutoLoginHttpTests : IAsyncLifetime
         _app.MapGet("/test/sign-in", async (HttpContext context) =>
         {
             await context.SignInAsync(new ClaimsPrincipal(new ClaimsIdentity(
-                [new Claim(ClaimTypes.NameIdentifier, "test-admin"), new Claim(ClaimTypes.Role, "Administrator")], CookieAuthenticationDefaults.AuthenticationScheme)));
+                [new Claim(ClaimTypes.NameIdentifier, "test-admin"), new Claim(ClaimTypes.Role, "Administrator"),
+                    new Claim(UserAuthenticationService.ADMINISTRATOR_SECRET_VERSION,
+                        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_settings.GetAdministratorSecret("test-admin")!))))], CookieAuthenticationDefaults.AuthenticationScheme)));
         });
         await _app.StartAsync();
         _handler = new HttpClientHandler { AllowAutoRedirect = false, UseProxy = false };
@@ -164,6 +168,7 @@ public sealed class AutoLoginHttpTests : IAsyncLifetime
         await ChangeKey(key => key.IsMcpReadKey = true);
         await Issue(_generated.PlainText);
         _options.IngestionKeys["Configured application"] = "short-key";
+        _options.AutoLoginAllowedApplications = ["Configured application"];
         var _issued = await Issue("short-key");
         using var _response = await _client.GetAsync(_issued.LoginPath);
         Assert.Equal("/telemetry/", _response.Headers.Location?.OriginalString);
@@ -174,6 +179,7 @@ public sealed class AutoLoginHttpTests : IAsyncLifetime
     [InlineData("revoke")]
     [InlineData("rotate")]
     [InlineData("expire")]
+    [InlineData("permission")]
     public async Task KeyChangesInvalidatePendingCodesAndExistingCookies(string change)
     {
         var _login = await Issue(_generated.PlainText);
@@ -190,9 +196,13 @@ public sealed class AutoLoginHttpTests : IAsyncLifetime
             {
                 key.KeyHash = IngestionKeyGenerator.Generate().Hash;
             }
-            else
+            else if (change == "expire")
             {
                 key.ExpiresUtc = _clock.GetUtcNow();
+            }
+            else
+            {
+                key.AllowAutoLogin = false;
             }
         });
 

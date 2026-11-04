@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using BlazorTelemetry.Core;
 using Microsoft.Data.Sqlite;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace BlazorTelemetry.Host.Configuration;
 
@@ -15,15 +16,37 @@ public sealed class TelemetryOptionsOverrideStore
 
     private readonly string _path;
     private readonly TelemetryOptionsOverrides? _startupOverrides;
+    private readonly IDataProtector _protector;
+    private const string PROTECTED_PREFIX = "protected:v1:";
 
-    public TelemetryOptionsOverrideStore(string connectionString)
+    public TelemetryOptionsOverrideStore(string connectionString, IDataProtectionProvider protection)
     {
+        _protector = protection.CreateProtector("BlazorTelemetry.OptionsSecrets.v1");
         var databasePath = Path.GetFullPath(new SqliteConnectionStringBuilder(connectionString).DataSource);
         _path = Path.Combine(Path.GetDirectoryName(databasePath)!, "blazor-telemetry-options.json");
-        _startupOverrides = Read();
+        _startupOverrides = Read(out var plaintextSecrets);
         if (_startupOverrides is not null && Validate(_startupOverrides).Count > 0)
         {
             throw new InvalidDataException("The saved telemetry options are invalid.");
+        }
+
+        if (plaintextSecrets && _startupOverrides is not null)
+        {
+            var temporaryPath = $"{_path}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                using (var stream = CreateProtectedFile(temporaryPath))
+                using (var writer = new StreamWriter(stream))
+                {
+                    writer.Write(SerializeProtected(_startupOverrides));
+                }
+
+                File.Move(temporaryPath, _path, true);
+            }
+            finally
+            {
+                File.Delete(temporaryPath);
+            }
         }
     }
 
@@ -114,11 +137,12 @@ public sealed class TelemetryOptionsOverrideStore
         var temporaryPath = $"{_path}.{Guid.NewGuid():N}.tmp";
         try
         {
-            await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(persisted, JSON_OPTIONS), cancellationToken);
-            if (!OperatingSystem.IsWindows())
+            await using (var stream = CreateProtectedFile(temporaryPath))
+            await using (var writer = new StreamWriter(stream))
             {
-                File.SetUnixFileMode(temporaryPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                await writer.WriteAsync(SerializeProtected(persisted).AsMemory(), cancellationToken);
             }
+
             File.Move(temporaryPath, _path, true);
         }
         finally
@@ -179,12 +203,67 @@ public sealed class TelemetryOptionsOverrideStore
 
     private TelemetryOptionsOverrides? Read()
     {
+        return Read(out _);
+    }
+
+    private TelemetryOptionsOverrides? Read(out bool plaintextSecrets)
+    {
+        plaintextSecrets = false;
         if (!File.Exists(_path))
         {
             return null;
         }
-        return JsonSerializer.Deserialize<TelemetryOptionsOverrides>(File.ReadAllText(_path), JSON_OPTIONS)
+        var saved = JsonSerializer.Deserialize<TelemetryOptionsOverrides>(File.ReadAllText(_path), JSON_OPTIONS)
             ?? throw new InvalidDataException("The saved telemetry options file is empty.");
+        if (saved.Webhook is not null && saved.Smtp is not null && saved.Ntfy is not null)
+        {
+            saved.Webhook.BearerToken = UnprotectSecret(saved.Webhook.BearerToken, ref plaintextSecrets);
+            saved.Smtp.Password = UnprotectSecret(saved.Smtp.Password, ref plaintextSecrets);
+            saved.Ntfy.AccessToken = UnprotectSecret(saved.Ntfy.AccessToken, ref plaintextSecrets);
+        }
+
+        return saved;
+    }
+
+    private string? UnprotectSecret(string? value, ref bool plaintextSecrets)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        if (value.StartsWith(PROTECTED_PREFIX, StringComparison.Ordinal))
+        {
+            return _protector.Unprotect(value[PROTECTED_PREFIX.Length..]);
+        }
+
+        plaintextSecrets = true;
+        return value;
+    }
+
+    private string SerializeProtected(TelemetryOptionsOverrides values)
+    {
+        var persisted = JsonSerializer.Deserialize<TelemetryOptionsOverrides>(JsonSerializer.Serialize(values, JSON_OPTIONS), JSON_OPTIONS)!;
+        persisted.Webhook.BearerToken = ProtectSecret(persisted.Webhook.BearerToken);
+        persisted.Smtp.Password = ProtectSecret(persisted.Smtp.Password);
+        persisted.Ntfy.AccessToken = ProtectSecret(persisted.Ntfy.AccessToken);
+        return JsonSerializer.Serialize(persisted, JSON_OPTIONS);
+    }
+
+    private string? ProtectSecret(string? value)
+    {
+        return string.IsNullOrEmpty(value) ? value : PROTECTED_PREFIX + _protector.Protect(value);
+    }
+
+    private static FileStream CreateProtectedFile(string path)
+    {
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        return new FileStream(path, options);
     }
 
     private static string? SecretValue(string? entered, bool clear, string? previous)

@@ -7,12 +7,15 @@
                 </span>
                 <span class="bt-sidebar-account-label">@context.User.Identity?.Name</span>
             </span>
-            <a class="bt-sidebar-account-item" href="/b2fa/logout">
+            <form method="post" action="b2fa/logout" data-enhance="false">
+            <AntiforgeryToken />
+            <button type="submit" class="bt-sidebar-account-item btn text-start w-100">
                 <span class="bt-sidebar-account-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M10 5H5v14h5m4-3 4-4-4-4m4 4H9"></path></svg>
                 </span>
                 <span class="bt-sidebar-account-label">Sign out</span>
-            </a>
+            </button>
+            </form>
         </div>
     </Authorized>
 </AuthorizeView>

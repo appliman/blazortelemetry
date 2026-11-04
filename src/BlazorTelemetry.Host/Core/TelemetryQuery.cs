@@ -16,4 +16,5 @@ public sealed record TelemetryQuery(
     int? MaximumStatusCode = null,
     bool? HasStatusCode = null,
     string? Name = null,
-    bool RequireHttpRequestDetails = false);
+    bool RequireHttpRequestDetails = false,
+    bool? IsOutgoingRequest = null);

@@ -9,7 +9,9 @@ public sealed class RequestTelemetryMiddleware(RequestDelegate next, ILogger<Req
     public async Task InvokeAsync(HttpContext context, IMediator repository, IHostEnvironment environment)
     {
         var _path = context.Request.Path;
-        if (_path.StartsWithSegments("/_blazor") ||
+        if (_path.StartsWithSegments("/b2fa") || _path.StartsWithSegments("/login") ||
+            _path.StartsWithSegments("/auto-login") || _path.StartsWithSegments("/api/auth") ||
+            _path.StartsWithSegments("/_blazor") ||
             _path.StartsWithSegments("/_framework") || _path.StartsWithSegments("/_content") ||
             _path.Equals(new PathString("/v1/logs")) || _path.Equals(new PathString("/v1/traces")) ||
             _path.Equals(new PathString("/v1/metrics")) || _path.Equals(new PathString("/blazor-telemetry/health")) ||

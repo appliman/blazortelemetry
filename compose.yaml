@@ -8,9 +8,13 @@ services:
 
     environment:
       ASPNETCORE_ENVIRONMENT: Staging
-      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "false"
       DOTNET_RUNNING_IN_CONTAINER: "true"
       TZ: Europe/Paris
+      SecretStorage__CertificatePath: /run/secrets/telemetry-storage.pfx
+      SecretStorage__CertificatePassword: ${SECRET_STORAGE_CERTIFICATE_PASSWORD:-}
+      SecretStorage__KeyDirectory: /secret-storage-keys
+      ReverseProxy__KnownNetworks__0: ${TRUSTED_PROXY_NETWORK:?Set TRUSTED_PROXY_NETWORK to the reverse proxy subnet in CIDR notation}
 
       # Kestrel endpoints
       Kestrel__Endpoints__Web__Url: http://0.0.0.0:8080
@@ -25,13 +29,15 @@ services:
       Blazor2fa__ApplicationName: ${BLAZOR2FA_APPLICATION_NAME:-Staging Administrator}
 
       # OTLP ingestion
-      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-false}
+      BlazorTelemetry__RequireIngestionKey: ${BLAZOR_TELEMETRY_REQUIRE_INGESTION_KEY:-true}
 
     expose:
       - "8080"
       - "4317"
 
     volumes:
+      - ${SECRET_STORAGE_CERTIFICATE_PATH:?Set SECRET_STORAGE_CERTIFICATE_PATH to an external PFX file}:/run/secrets/telemetry-storage.pfx:ro
+      - ${SECRET_STORAGE_KEY_PATH:?Set SECRET_STORAGE_KEY_PATH to a separate persistent key directory}:/secret-storage-keys
       - ${DATA_PATH:?Set DATA_PATH to a dedicated absolute path}:/data
 
     networks:
