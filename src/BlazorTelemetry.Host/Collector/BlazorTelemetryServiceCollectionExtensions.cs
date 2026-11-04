@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ChannelMediator.InMemory;
 using FluentValidation;
+using BlazorTelemetry.Host.Configuration;
 using BlazorTelemetry.Host.Validators;
 
 namespace BlazorTelemetry.AspNetCore;
@@ -51,6 +52,9 @@ public static class BlazorTelemetryServiceCollectionExtensions
         services.AddHostedService<AlertEvaluationService>();
         services.AddHostedService<NotificationDeliveryService>();
         services.AddHttpClient();
+        var destinationPolicy = new NotificationDestinationPolicy(configuration.GetSection("NotificationSecurity:AllowedPrivateHosts").Get<string[]>() ?? []);
+        services.AddHttpClient(nameof(NotificationDeliveryService), client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(destinationPolicy.CreateHandler);
         return services;
     }
 

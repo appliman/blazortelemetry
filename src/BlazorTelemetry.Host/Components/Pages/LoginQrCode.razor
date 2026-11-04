@@ -4,11 +4,13 @@
 @using BlazorTelemetry.Host.Authentication
 @using QRCoder
 @using System.Web
+@using System.Security.Cryptography
+@using System.Text
 @inject BlazorAuthConfiguration Settings
 @inject UserAuthenticationService Authentication
 @inject UserAttemptLimiter Limiter
-@inject Blazor2faAuthenticationTicketStore TicketStore
 @inject NavigationManager Navigation
+@inject IHttpContextAccessor HttpContextAccessor
 
 @code {
     private readonly CancellationTokenSource _lifetime = new();
@@ -17,7 +19,6 @@
     {
         _setupSecret = null;
         _secret = "";
-        _code = "";
         _image = null;
         _lifetime.Cancel();
         _lifetime.Dispose();
@@ -25,7 +26,6 @@
 
     private string _identifier = "";
     private string _secret = "";
-    private string _code = "";
     private string? _image;
     private string? _error;
     private string? _setupIdentifier;
@@ -33,6 +33,12 @@
     private bool _adminSetup;
     private bool _busy;
     private bool _interactiveReady;
+    private string _source = "unknown";
+
+    protected override void OnInitialized()
+    {
+        _source = HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    }
 
     protected override void OnAfterRender(bool firstRender)
     {
@@ -57,17 +63,19 @@
             _adminSetup = Settings.AllowedUserLogins.Contains(_identifier.Trim(), StringComparer.OrdinalIgnoreCase);
             if (_adminSetup)
             {
-                if (!Limiter.Allow(_identifier) || string.IsNullOrWhiteSpace(Settings.SecretKey) || _secret != Settings.SecretKey)
+                var _adminSecret = Settings.GetAdministratorSecret(_identifier);
+                if (!Limiter.AllowSource(_source) || !Limiter.Allow(_identifier, _source) || string.IsNullOrWhiteSpace(_adminSecret)
+                    || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(_secret), Encoding.UTF8.GetBytes(_adminSecret)))
                 {
                     _error = "The identifier or secret is invalid, or setup is unavailable.";
                     return;
                 }
-                var _setup = new TwoFactorAuthenticator().GenerateSetupCode(Settings.Issuer, Settings.ApplicationName, Settings.SecretKey, 300, 300);
+                var _setup = new TwoFactorAuthenticator().GenerateSetupCode(Settings.Issuer, _identifier.Trim(), _adminSecret, 300, 300);
                 _uri = HttpUtility.ParseQueryString(new Uri(_setup.QrCodeSetupImageUrl).Query).Get("chl");
             }
             else
             {
-                _uri = await Authentication.SetupUri(_identifier, _secret, _lifetime.Token);
+                _uri = await Authentication.SetupUri(_identifier, _secret, _lifetime.Token, _source);
             }
             if (_uri is null)
             {
@@ -88,30 +96,6 @@
         }
     }
 
-    private async Task Confirm()
-    {
-        if (_busy)
-        {
-            return;
-        }
-        _busy = true;
-        try
-        {
-            var _claims = await Authentication.Authenticate(_setupIdentifier ?? "", _code, _setupSecret, _lifetime.Token);
-            if (_claims is null)
-            {
-                _error = "The authentication code is invalid, or setup is unavailable.";
-                return;
-            }
-            _image = null;
-            _setupSecret = null;
-            Navigation.NavigateTo($"/b2fa/authenticate/{TicketStore.Issue(_claims)}", true);
-        }
-        finally
-        {
-            _busy = false;
-        }
-    }
 }
 
 <ApplicationPageTitle>Set up authentication</ApplicationPageTitle>
@@ -134,10 +118,13 @@
     {
         <p>Scan this QR code with your personal authenticator, then enter its current code.</p>
         <div class="text-center"><strong>@_setupIdentifier</strong><br /><img style="image-rendering:pixelated;max-width:100%;height:auto" src="data:image/png;base64,@_image" alt="Authenticator setup QR code" /></div>
-        <EditForm Model="this" OnValidSubmit="Confirm" FormName="confirmAuthenticator">
-            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="code" class="form-control" placeholder="Authentication code" @bind-Value="_code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><label for="code">Authentication code</label></div>
+        <form method="post" action="@(new Uri(new Uri(Navigation.BaseUri), "b2fa/authenticate").AbsolutePath)" data-enhance="false">
+            <AntiforgeryToken />
+            <input type="hidden" name="identifier" value="@_setupIdentifier" />
+            <input type="hidden" name="setupSecret" value="@(_adminSetup ? null : _setupSecret)" />
+            <div class="form-floating mb-3"><input required id="code" name="code" class="form-control" placeholder="Authentication code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" /><label for="code">Authentication code</label></div>
             <button type="submit" class="btn btn-primary" disabled="@(_busy || !_interactiveReady)">Confirm and sign in</button>
-        </EditForm>
+        </form>
     }
     <p class="auth-help"><a href="/login">Back to sign in</a></p>
 </div></main>

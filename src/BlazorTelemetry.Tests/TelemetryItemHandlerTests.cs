@@ -260,6 +260,42 @@ public sealed partial class TelemetryCqrsTests
         Assert.False(inProgressPage.IsTruncated);
     }
 
+    [Theory]
+    [InlineData(null, 4, "outgoing-newer", true)]
+    [InlineData(true, 2, "outgoing-newer", true)]
+    [InlineData(false, 2, "incoming-server", true)]
+    public async Task QueryFiltersRequestDirectionBeforeCountingAndPagination(bool? _isOutgoing, int _total, string _name, bool _truncated)
+    {
+        var _timestamp = DateTimeOffset.UtcNow;
+        await _mediator.Store([
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp, ObservedUtc = _timestamp, ServiceName = "api", Name = "incoming-legacy", Body = "GET", ClientAddress = "203.0.113.1", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(1), ObservedUtc = _timestamp, ServiceName = "api", Name = "incoming-server", Body = "GET", SpanKind = "Server", ClientAddress = "203.0.113.2", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(2), ObservedUtc = _timestamp, ServiceName = "api", Name = "outgoing-older", Body = "POST", SpanKind = "Client", ServerAddress = "example.com", StatusCode = 201 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(3), ObservedUtc = _timestamp, ServiceName = "api", Name = "outgoing-newer", Body = "GET", SpanKind = "Client", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(4), ObservedUtc = _timestamp, ServiceName = "other", Name = "other-service", Body = "GET", SpanKind = "Client", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(5), ObservedUtc = _timestamp, ServiceName = "api", Name = "error", Body = "GET", SpanKind = "Client", StatusCode = 500 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(6), ObservedUtc = _timestamp, ServiceName = "api", Name = "missing-method", SpanKind = "Client", StatusCode = 200 },
+            new TelemetryItem { Kind = TelemetryKind.Request, TimestampUtc = _timestamp.AddSeconds(7), ObservedUtc = _timestamp, ServiceName = "api", Name = "outside-period", Body = "GET", SpanKind = "Client", StatusCode = 200 }
+        ], CancellationToken.None);
+
+        var _page = await _mediator.Query(new TelemetryQuery(TelemetryKind.Request, "api", FromUtc: _timestamp,
+            ToUtc: _timestamp.AddSeconds(6), Take: 1, MinimumStatusCode: 200, MaximumStatusCode: 299,
+            RequireHttpRequestDetails: true, IsOutgoingRequest: _isOutgoing), CancellationToken.None);
+
+        Assert.Equal(_name, Assert.Single(_page.Items).Name);
+        Assert.Equal(_total, _page.Total);
+        Assert.Equal(_truncated, _page.IsTruncated);
+
+        var _remaining = await _mediator.Query(new TelemetryQuery(TelemetryKind.Request, "api", FromUtc: _timestamp,
+            ToUtc: _timestamp.AddSeconds(6), Skip: 1, Take: 10, MinimumStatusCode: 200, MaximumStatusCode: 299,
+            RequireHttpRequestDetails: true, IsOutgoingRequest: _isOutgoing), CancellationToken.None);
+        Assert.Equal(_total - 1, _remaining.Items.Count);
+        if (_isOutgoing == false)
+        {
+            Assert.Equal("incoming-legacy", Assert.Single(_remaining.Items).Name);
+        }
+    }
+
     [Fact]
     public async Task QueryRequiresRequestMethodAndIpBeforeCountingAndPagination()
     {

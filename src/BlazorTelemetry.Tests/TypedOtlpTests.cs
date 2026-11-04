@@ -93,6 +93,51 @@ public sealed partial class TelemetryCqrsTests
     }
 
     [Fact]
+    public async Task HttpClientSpanKeepsTraceAndTypedRequestWithoutClientAddress()
+    {
+        var _span = new Span
+        {
+            Name = "GET", Kind = Span.Types.SpanKind.Client, StartTimeUnixNano = 1790848800000000000,
+            EndTimeUnixNano = 1790848800010000000, TraceId = ByteString.CopyFrom(new byte[16]), SpanId = ByteString.CopyFrom(new byte[8]),
+            Attributes =
+            {
+                new KeyValue { Key = "http.request.method", Value = new AnyValue { StringValue = "GET" } },
+                new KeyValue { Key = "url.full", Value = new AnyValue { StringValue = "https://payments.example.com/charges" } },
+                new KeyValue { Key = "server.address", Value = new AnyValue { StringValue = "payments.example.com" } },
+                new KeyValue { Key = "server.port", Value = new AnyValue { IntValue = 443 } },
+                new KeyValue { Key = "http.response.status_code", Value = new AnyValue { IntValue = 200 } }
+            }
+        };
+        _span.Events.Add(new Span.Types.Event { Name = "response received", TimeUnixNano = _span.EndTimeUnixNano });
+        var _request = new ExportTraceServiceRequest { ResourceSpans = { new ResourceSpans { ScopeSpans = { new ScopeSpans { Spans = { _span } } } } } };
+        var _parser = new OtlpParser(new OtlpValueConverter(new BlazorTelemetryOptions()));
+
+        await _mediator.Store(_parser.ParseTraces(_request, "api"), CancellationToken.None);
+        var _page = await _mediator.Query(new TelemetryQuery(TraceId: new string('0', 32)), CancellationToken.None);
+
+        Assert.Equal(2, _page.Total);
+        var _trace = Assert.Single(_page.Items, _item => _item.Kind == TelemetryKind.Trace);
+        Assert.Equal("Client", _trace.SpanKind);
+        Assert.Equal("response received", Assert.Single(_trace.Events).Name);
+        Assert.Contains("http.request.method", _trace.AttributesJson);
+        var _http = Assert.Single(_page.Items, _item => _item.Kind == TelemetryKind.Request);
+        Assert.Equal("Client", _http.SpanKind);
+        Assert.Equal("OTLP client span", _http.Source);
+        Assert.Equal("GET", _http.HttpMethod);
+        Assert.Equal("https://payments.example.com/charges", _http.Url);
+        Assert.Equal("payments.example.com", _http.ServerAddress);
+        Assert.Equal(443, _http.ServerPort);
+        Assert.Equal(200, _http.StatusCode);
+        Assert.Equal(10, _http.DurationMs);
+        Assert.Null(_http.ClientAddress);
+        Assert.DoesNotContain("http.request.method", _http.AttributesJson);
+        Assert.DoesNotContain("server.address", _http.AttributesJson);
+
+        var _requests = await _mediator.Query(new TelemetryQuery(TelemetryKind.Request, RequireHttpRequestDetails: true), CancellationToken.None);
+        Assert.Equal(_http.Id, Assert.Single(_requests.Items).Id);
+    }
+
+    [Fact]
     public void OtlpMetricsRejectOverflowWithoutSilentNumericTruncation()
     {
         var _parser = new OtlpParser(new OtlpValueConverter(new BlazorTelemetryOptions()));

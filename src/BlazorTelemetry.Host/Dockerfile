@@ -7,7 +7,7 @@ ENV DOTNET_EnableDiagnostics=0 \
     TZ=Europe/Paris \
     BlazorTelemetry__ConnectionString="Data Source=/data/telemetry.db;Cache=Shared"
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libpcre2-8-0 \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data \
     && chown -R $APP_UID:$APP_UID /data /app
@@ -15,6 +15,9 @@ RUN apt-get update \
 FROM mcr.microsoft.com/dotnet/sdk:10.0.403-noble AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade libbrotli1 libpcre2-8-0 \
+    && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN dotnet restore BlazorTelemetry.Host/BlazorTelemetry.Host.csproj
 RUN dotnet publish BlazorTelemetry.Host/BlazorTelemetry.Host.csproj \

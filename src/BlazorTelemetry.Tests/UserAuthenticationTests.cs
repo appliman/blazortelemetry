@@ -8,7 +8,6 @@ using BlazorTelemetry.Host.Handlers.Users;
 using BlazorTelemetry.Host.Validators;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -194,7 +193,7 @@ public sealed class UserAuthenticationTests : IDisposable
     [InlineData("reset")]
     [InlineData("rename")]
     [InlineData("disable")]
-    public async Task AccountChangesRevokeSessionsAndOutstandingTickets(string operation)
+    public async Task AccountChangesRevokeSessions(string operation)
     {
         var (_user, secret) = await Create("Alice");
         var _claims = (await _authentication.Authenticate("Alice", CurrentCode(_user, secret), secret, default))!;
@@ -212,11 +211,6 @@ public sealed class UserAuthenticationTests : IDisposable
         var _result = await _save.Handle(new(_user, operation == "reset", _version, _admin), default);
         Assert.False(_result.HasError);
         Assert.False(await _authentication.IsCurrent(_principal, default));
-        var _tickets = new Blazor2faAuthenticationTicketStore(_clock);
-        var _ticket = _tickets.Issue(_claims);
-        var _controller = new AuthenticateController(NullLogger<AuthenticateController>.Instance, _tickets, _authentication, _settings)
-        { ControllerContext = new() { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext() } };
-        Assert.Equal("/login", Assert.IsType<RedirectResult>(await _controller.Authenticate(_ticket.ToString())).Url);
         var _authorization = new AuthorizationHandlerContext([new UserSessionRequirement()], _principal, null);
         await new UserSessionAuthorizationHandler(_authentication).HandleAsync(_authorization);
         Assert.False(_authorization.HasSucceeded);
@@ -274,9 +268,88 @@ public sealed class UserAuthenticationTests : IDisposable
     [Fact]
     public async Task ConfiguredAdministratorKeepsExistingTotp()
     {
-        var _code = new TwoFactorAuthenticator().GetCurrentPIN(_settings.SecretKey);
+        var _code = UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _clock.GetUtcNow().ToUnixTimeSeconds() / 30);
         var _claims = await _authentication.Authenticate("ADMIN", _code, null, default);
         Assert.Contains(_claims!, claim => claim.Type == ClaimTypes.Role && claim.Value == "Administrator");
+    }
+
+    [Fact]
+    public async Task AdministratorReplayIsRejectedAcrossServiceInstancesAndLimiterRestarts()
+    {
+        var _code = UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _clock.GetUtcNow().ToUnixTimeSeconds() / 30);
+        Assert.NotNull(await _authentication.Authenticate("admin", _code, null, default));
+        using var _newLimiter = new UserAttemptLimiter(_clock);
+        var _restarted = new UserAuthenticationService(_factory, new EphemeralDataProtectionProvider(), _settings, _newLimiter, _clock);
+        Assert.Null(await _restarted.Authenticate("ADMIN", _code, null, default));
+        _clock.Advance(TimeSpan.FromSeconds(30));
+        var _nextCode = UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _clock.GetUtcNow().ToUnixTimeSeconds() / 30);
+        Assert.NotNull(await _restarted.Authenticate("admin", _nextCode, null, default));
+    }
+
+    [Fact]
+    public async Task ConcurrentAdministratorReplaySucceedsOnlyOnce()
+    {
+        var _code = UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _clock.GetUtcNow().ToUnixTimeSeconds() / 30);
+        var _results = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => _authentication.Authenticate("admin", _code, null, default)));
+        Assert.Single(_results, result => result is not null);
+    }
+
+    [Fact]
+    public async Task AdministratorRejectsCodesOutsideOneStepAndRevokesSessionsOnSecretRotation()
+    {
+        var _interval = _clock.GetUtcNow().ToUnixTimeSeconds() / 30;
+        Assert.Null(await _authentication.Authenticate("admin", UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _interval - 2), null, default));
+        Assert.Null(await _authentication.Authenticate("admin", UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _interval + 2), null, default));
+        var _claims = await _authentication.Authenticate("admin", UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _interval), null, default);
+        var _principal = new ClaimsPrincipal(new ClaimsIdentity(_claims!, "test"));
+        Assert.True(await _authentication.IsCurrent(_principal, default));
+        _settings.SecretKey = "rotated-administrator-secret";
+        Assert.False(await _authentication.IsCurrent(_principal, default));
+        Assert.NotNull(await _authentication.Authenticate("admin", UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _interval), null, default));
+    }
+
+    [Fact]
+    public async Task MultipleAdministratorsRequireIndividualSecrets()
+    {
+        _settings.AllowedUserLogins.Add("other-admin");
+        var _interval = _clock.GetUtcNow().ToUnixTimeSeconds() / 30;
+        Assert.Null(await _authentication.Authenticate("admin", UserTotp.Code(Encoding.UTF8.GetBytes(_settings.SecretKey), _interval), null, default));
+        _settings.AdministratorSecrets["ADMIN"] = "individual-administrator-secret";
+        Assert.NotNull(await _authentication.Authenticate("admin", UserTotp.Code(Encoding.UTF8.GetBytes(_settings.AdministratorSecrets["ADMIN"]), _interval), null, default));
+        Assert.Null(_settings.GetAdministratorSecret("other-admin"));
+    }
+
+    [Fact]
+    public void LimiterDoesNotEvictBlockedAccountsWhenIdentifierCapacityIsReached()
+    {
+        for (var _index = 0; _index < 5; _index++)
+        {
+            Assert.True(_limiter.Allow("target"));
+        }
+        for (var _index = 0; _index < 4095; _index++)
+        {
+            Assert.True(_limiter.Allow($"account-{_index}"));
+        }
+        Assert.False(_limiter.Allow("overflow"));
+        Assert.False(_limiter.Allow("target"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.True(_limiter.Allow("target"));
+    }
+
+    [Fact]
+    public void FailedAttemptsFromOneSourceDoNotLockAnotherSource()
+    {
+        for (var _index = 0; _index < 5; _index++)
+        {
+            Assert.True(_limiter.Allow("admin", "192.0.2.1"));
+        }
+        Assert.False(_limiter.Allow("admin", "192.0.2.1"));
+        Assert.True(_limiter.Allow("ADMIN", "192.0.2.2"));
+        for (var _index = 0; _index < 30; _index++)
+        {
+            Assert.True(_limiter.AllowSource("192.0.2.1"));
+        }
+        Assert.False(_limiter.AllowSource("192.0.2.1"));
     }
 
     [Fact]

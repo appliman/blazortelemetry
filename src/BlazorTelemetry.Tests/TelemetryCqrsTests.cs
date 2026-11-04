@@ -36,6 +36,7 @@ public sealed partial class TelemetryCqrsTests : IAsyncLifetime
         await context.Database.EnsureCreatedAsync();
         var services = new ServiceCollection();
         services.AddLogging();
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IDbContextFactory<TelemetryDbContext>>(new TestDbContextFactory(_options));
         services.AddSingleton(_telemetryOptions);
         services.AddChannelMediator(configuration => configuration.UseChannelMediatorInMemory(), typeof(BlazorTelemetryServiceCollectionExtensions).Assembly);

@@ -1,10 +1,13 @@
 using BlazorTelemetry.Core;
 using BlazorTelemetry.Host.Configuration;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace BlazorTelemetry.Tests;
 
 public sealed class TelemetryOptionsOverrideStoreTests
 {
+    private readonly IDataProtectionProvider _protection = new EphemeralDataProtectionProvider();
+
     [Fact]
     public async Task SavesAllowedOverridesAndPreservesExcludedSettings()
     {
@@ -13,7 +16,7 @@ public sealed class TelemetryOptionsOverrideStoreTests
         try
         {
             var connectionString = $"Data Source={Path.Combine(directory, "telemetry.db")}";
-            var store = new TelemetryOptionsOverrideStore(connectionString);
+            var store = new TelemetryOptionsOverrideStore(connectionString, _protection);
             var source = new BlazorTelemetryOptions
             {
                 ConnectionString = connectionString,
@@ -36,6 +39,8 @@ public sealed class TelemetryOptionsOverrideStoreTests
             Assert.DoesNotContain(nameof(BlazorTelemetryOptions.ReaderPolicy), savedText);
             Assert.DoesNotContain(nameof(BlazorTelemetryOptions.AdministratorPolicy), savedText);
             Assert.DoesNotContain(nameof(BlazorTelemetryOptions.IngestionKeys), savedText);
+            Assert.DoesNotContain("new-webhook-token", savedText);
+            Assert.Contains("protected:v1:", savedText);
 
             var editable = Assert.IsType<TelemetryOptionsOverrides>(store.GetForEditing());
             Assert.Equal(14, editable.RawRetentionDays);
@@ -44,7 +49,7 @@ public sealed class TelemetryOptionsOverrideStoreTests
             editable.MetricRetentionDays = 60;
             await store.Save(editable, null, false, null, false, null, false, CancellationToken.None);
 
-            var restartedStore = new TelemetryOptionsOverrideStore(connectionString);
+            var restartedStore = new TelemetryOptionsOverrideStore(connectionString, _protection);
             restartedStore.Apply(source);
             Assert.Equal(14, source.RawRetentionDays);
             Assert.Equal(60, source.MetricRetentionDays);
@@ -69,13 +74,54 @@ public sealed class TelemetryOptionsOverrideStoreTests
     }
 
     [Fact]
+    public async Task MigratesPlaintextSecretsAndDoesNotExposeThemWhenEditing()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-options-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "blazor-telemetry-options.json");
+            var values = TelemetryOptionsOverrides.From(new BlazorTelemetryOptions());
+            values.Webhook.BearerToken = "legacy-webhook-secret";
+            values.Smtp.Password = "legacy-smtp-secret";
+            values.Ntfy.AccessToken = "legacy-ntfy-secret";
+            await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(values));
+
+            var connectionString = $"Data Source={Path.Combine(directory, "telemetry.db")}";
+            var store = new TelemetryOptionsOverrideStore(connectionString, _protection);
+            var text = await File.ReadAllTextAsync(path);
+            Assert.DoesNotContain("legacy-webhook-secret", text);
+            Assert.DoesNotContain("legacy-smtp-secret", text);
+            Assert.DoesNotContain("legacy-ntfy-secret", text);
+
+            var options = new BlazorTelemetryOptions();
+            store.Apply(options);
+            Assert.Equal("legacy-webhook-secret", options.Webhook.BearerToken);
+            Assert.Equal("legacy-smtp-secret", options.Smtp.Password);
+            Assert.Equal("legacy-ntfy-secret", options.Ntfy.AccessToken);
+            var editable = Assert.IsType<TelemetryOptionsOverrides>(store.GetForEditing());
+            Assert.Null(editable.Webhook.BearerToken);
+            Assert.Null(editable.Smtp.Password);
+            Assert.Null(editable.Ntfy.AccessToken);
+
+            Assert.Throws<System.Security.Cryptography.CryptographicException>(() =>
+                new TelemetryOptionsOverrideStore(connectionString, new EphemeralDataProtectionProvider()));
+            Assert.Equal(text, await File.ReadAllTextAsync(path));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
     public async Task RejectsInvalidValuesWithoutCreatingAnOverrideFile()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"blazor-telemetry-options-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         try
         {
-            var store = new TelemetryOptionsOverrideStore($"Data Source={Path.Combine(directory, "telemetry.db")}");
+            var store = new TelemetryOptionsOverrideStore($"Data Source={Path.Combine(directory, "telemetry.db")}", _protection);
             var values = TelemetryOptionsOverrides.From(new BlazorTelemetryOptions());
             values.RawRetentionDays = 0;
 

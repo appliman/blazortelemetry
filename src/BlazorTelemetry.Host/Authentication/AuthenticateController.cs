@@ -1,93 +1,52 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
-using System.Security.Claims;
-
 namespace BlazorTelemetry.Host.Authentication;
 
-public class AuthenticateController(
-	ILogger<AuthenticateController> logger,
-	Blazor2faAuthenticationTicketStore ticketStore,
-	UserAuthenticationService authentication,
-	BlazorAuthConfiguration settings
-	)
-	: Controller
+public sealed class AuthenticateController(
+    ILogger<AuthenticateController> logger,
+    UserAuthenticationService authentication,
+    BlazorAuthConfiguration settings,
+    TimeProvider timeProvider) : Controller
 {
-	[AllowAnonymous]
-	[HttpGet]
-	[Route("/b2fa/authenticate/{token:guid}")]
-	public async Task<IActionResult> Authenticate(string token)
-	{
-		if (string.IsNullOrWhiteSpace(token))
-		{
-			logger.LogWarning("Token is empty");
-			return Redirect("/");
-		}
-
-		if (!ticketStore.TryConsume(token, out var claims))
-		{
-			logger.LogWarning("Authentication token is invalid, expired or already consumed");
-			return Redirect("/");
-		}
-
-		if (!await authentication.IsCurrent(new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)), HttpContext.RequestAborted))
+    [AllowAnonymous]
+    [HttpPost("/b2fa/authenticate")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> Authenticate([FromForm] string? identifier, [FromForm] string? code,
+        [FromForm] string? setupSecret, [FromForm] string? returnUrl)
+    {
+        Response.Headers.CacheControl = "no-store";
+        Response.Headers["Referrer-Policy"] = "no-referrer";
+        var _target = !string.IsNullOrWhiteSpace(returnUrl) && Url.IsLocalUrl(returnUrl) ? returnUrl : $"{Request.PathBase}/";
+        var _claims = await authentication.Authenticate(identifier ?? "", code ?? "", setupSecret,
+            HttpContext.RequestAborted, HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+        if (_claims is null)
         {
-            return Redirect("/login");
+            return LocalRedirect($"{Request.PathBase}/login?error=true&returnUrl={Uri.EscapeDataString(_target)}");
         }
 
-        var claimsIdentity = new ClaimsIdentity(
-			claims,
-			CookieAuthenticationDefaults.AuthenticationScheme);
+        var _identity = new ClaimsIdentity(_claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        await HttpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(_identity),
+            new AuthenticationProperties
+            {
+                AllowRefresh = true,
+                IsPersistent = true,
+                ExpiresUtc = timeProvider.GetUtcNow().AddDays(settings.CookieDurationInDays)
+            });
+        logger.LogInformation("User {Name} authenticated", _identity.Name);
+        return LocalRedirect(_target);
+    }
 
-		var userPrincipal = new ClaimsPrincipal(claimsIdentity);
-
-		var authProperties = new AuthenticationProperties
-		{
-			AllowRefresh = true,
-			IsPersistent = true,
-			ExpiresUtc = DateTimeOffset.UtcNow.AddDays(settings.CookieDurationInDays)
-		};
-
-		await HttpContext.SignInAsync(
-			CookieAuthenticationDefaults.AuthenticationScheme,
-			userPrincipal,
-			authProperties);
-
-		var returnUrl = Request.Query
-			.FirstOrDefault(parameter => string.Equals(
-				parameter.Key,
-				"ReturnUrl",
-				StringComparison.OrdinalIgnoreCase))
-			.Value
-			.ToString();
-		if (!string.IsNullOrWhiteSpace(returnUrl)
-			&& Url.IsLocalUrl(returnUrl))
-		{
-			logger.LogInformation(
-				"User {Name} authenticated and redirected to {ReturnUrl}",
-				claims.FirstOrDefault(claim => claim.Type == ClaimTypes.Name)?.Value,
-				returnUrl);
-			return Redirect(returnUrl);
-		}
-
-		return Redirect("/");
-	}
-
-	[HttpGet]
-	[Route("/b2fa/logout")]
-	public async Task<IActionResult> TryLogout()
-	{
-		if (User.Identity == null
-			|| !User.Identity.IsAuthenticated)
-		{
-			return Redirect("/");
-		}
-		await HttpContext.SignOutAsync();
-
-		logger.LogInformation("User {Name} logged out", User.Identity.Name);
-
-		return Redirect("/");
-	}
+    [HttpPost("/b2fa/logout")]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> TryLogout()
+    {
+        Response.Headers.CacheControl = "no-store";
+        await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        logger.LogInformation("User {Name} logged out", User.Identity?.Name);
+        return LocalRedirect($"{Request.PathBase}/");
+    }
 }

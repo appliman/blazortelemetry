@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using BlazorTelemetry.Core;
 using BlazorTelemetry.Sqlite;
 using Microsoft.AspNetCore.DataProtection;
@@ -17,6 +19,7 @@ public sealed class UserAuthenticationService(
 {
     public const string USER_ID = "telemetry_user_id";
     public const string SECURITY_VERSION = "telemetry_security_version";
+    public const string ADMINISTRATOR_SECRET_VERSION = "telemetry_administrator_secret_version";
     private readonly IDataProtector _protector = protection.CreateProtector("BlazorTelemetry.Users.Secret.v1");
 
     public string Protect(Guid _secret) => _protector.Protect(_secret.ToString("D"));
@@ -36,7 +39,8 @@ public sealed class UserAuthenticationService(
         }
         if (IsAdministrator(principal))
         {
-            return true;
+            var _secret = settings.GetAdministratorSecret(principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+            return _secret is not null && principal.FindFirstValue(ADMINISTRATOR_SECRET_VERSION) == SecretVersion(_secret);
         }
         if (principal.Identity?.IsAuthenticated != true || !long.TryParse(principal.FindFirstValue(USER_ID), out var _id)
             || !Guid.TryParse(principal.FindFirstValue(SECURITY_VERSION), out var _version))
@@ -47,9 +51,9 @@ public sealed class UserAuthenticationService(
         return await _context.Users.AnyAsync(_user => _user.Id == _id && _user.IsActive && _user.ActivatedUtc != null && _user.SecurityVersion == _version, cancellationToken);
     }
 
-    public async Task<string?> SetupUri(string _identifier, string _secret, CancellationToken cancellationToken)
+    public async Task<string?> SetupUri(string _identifier, string _secret, CancellationToken cancellationToken, string? source = null)
     {
-        if (!limiter.Allow(_identifier) || !Guid.TryParse(_secret, out var _guid))
+        if ((source is not null && !limiter.AllowSource(source)) || !limiter.Allow(_identifier, source) || !Guid.TryParse(_secret, out var _guid))
         {
             return null;
         }
@@ -70,19 +74,17 @@ public sealed class UserAuthenticationService(
         return $"otpauth://totp/{_label}?secret={UserTotp.Base32(UserTotp.Key(_guid, _user.Identifier))}&issuer={_issuer}&algorithm=SHA1&digits=6&period=30";
     }
 
-    public async Task<IReadOnlyCollection<Claim>?> Authenticate(string _identifier, string code, string? setupSecret, CancellationToken cancellationToken)
+    public async Task<IReadOnlyCollection<Claim>?> Authenticate(string _identifier, string code, string? setupSecret, CancellationToken cancellationToken, string? source = null)
     {
         _identifier = _identifier.Trim();
-        if (!limiter.Allow(_identifier))
+        if (_identifier.Length is 0 or > 256 || code.Length != 6 || (source is not null && !limiter.AllowSource(source)) || !limiter.Allow(_identifier, source))
         {
             return null;
         }
         var _admin = settings.AllowedUserLogins.Find(value => string.Equals(value, _identifier, StringComparison.OrdinalIgnoreCase));
         if (_admin is not null)
         {
-            return !string.IsNullOrWhiteSpace(settings.SecretKey) && new TwoFactorAuthenticator().ValidateTwoFactorPIN(settings.SecretKey, code.Trim())
-                ? [new Claim(ClaimTypes.NameIdentifier, _admin), new Claim(ClaimTypes.Name, _admin), new Claim(ClaimTypes.Role, "Administrator")]
-                : null;
+            return await AuthenticateAdministrator(_admin, code.Trim(), cancellationToken);
         }
         await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var _user = await _context.Users.AsNoTracking().SingleOrDefaultAsync(_user => _user.Identifier == _identifier, cancellationToken);
@@ -122,6 +124,39 @@ public sealed class UserAuthenticationService(
         return [new Claim(ClaimTypes.NameIdentifier, _user.Id.ToString()), new Claim(ClaimTypes.Name, _user.Identifier),
             new Claim(ClaimTypes.Role, "Reader"), new Claim(USER_ID, _user.Id.ToString()), new Claim(SECURITY_VERSION, _user.SecurityVersion.ToString("D"))];
     }
+
+    private async Task<IReadOnlyCollection<Claim>?> AuthenticateAdministrator(string identifier, string code, CancellationToken cancellationToken)
+    {
+        var _secret = settings.GetAdministratorSecret(identifier);
+        if (_secret is null)
+        {
+            return null;
+        }
+        var _interval = UserTotp.Match(Encoding.UTF8.GetBytes(_secret), code, timeProvider.GetUtcNow());
+        if (_interval is null)
+        {
+            return null;
+        }
+
+        var _identifier = identifier.Trim().ToUpperInvariant();
+        var _version = SecretVersion(_secret);
+        await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        // The unique primary key and conditional update also reject replay across processes.
+        await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT OR IGNORE INTO AdministratorTotpStates (Identifier, LastAcceptedInterval, SecretVersion) VALUES ({_identifier}, {-1L}, {_version})", cancellationToken);
+        var _changed = await _context.AdministratorTotpStates
+            .Where(value => value.Identifier == _identifier && (value.SecretVersion != _version || value.LastAcceptedInterval < _interval.Value))
+            .ExecuteUpdateAsync(update => update.SetProperty(value => value.LastAcceptedInterval, _interval.Value)
+                .SetProperty(value => value.SecretVersion, _version), cancellationToken);
+        if (_changed != 1)
+        {
+            return null;
+        }
+        return [new Claim(ClaimTypes.NameIdentifier, identifier), new Claim(ClaimTypes.Name, identifier),
+            new Claim(ClaimTypes.Role, "Administrator"), new Claim(ADMINISTRATOR_SECRET_VERSION, _version)];
+    }
+
+    private static string SecretVersion(string secret) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(secret)));
 
     private bool SecretMatches(TelemetryUser _user, Guid _secret)
     {

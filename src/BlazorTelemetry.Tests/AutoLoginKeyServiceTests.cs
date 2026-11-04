@@ -58,7 +58,7 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ActiveDatabaseKeysAuthenticateWithoutRestrictingTheirPurpose(bool isMcpReadKey)
+    public async Task ExplicitlyAllowedDatabaseKeysAuthenticate(bool isMcpReadKey)
     {
         var (_application, _secret) = await CreateDatabaseKey(isMcpReadKey);
 
@@ -77,6 +77,7 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
     public async Task ConfiguredKeyAuthenticatesWithItsConfiguredIdentity()
     {
         _options.IngestionKeys["external-client"] = "configured-secret";
+        _options.AutoLoginAllowedApplications = ["external-client"];
 
         var _result = await _keys.Authenticate("configured-secret", default);
 
@@ -105,6 +106,7 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
     [InlineData("revoke")]
     [InlineData("expire")]
     [InlineData("rotate")]
+    [InlineData("permission")]
     public async Task DatabaseKeyChangesInvalidateOutstandingCodesAndExistingSessions(string operation)
     {
         var (_application, _secret) = await CreateDatabaseKey();
@@ -131,6 +133,9 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
                 case "rotate":
                     _stored.KeyHash = _replacement.Hash;
                     _stored.KeyPrefix = _replacement.Prefix;
+                    break;
+                case "permission":
+                    _stored.AllowAutoLogin = false;
                     break;
             }
             await _context.SaveChangesAsync();
@@ -175,6 +180,7 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
     public async Task RemovingOrRotatingConfiguredKeyInvalidatesCodesAndSessions(bool rotate)
     {
         _options.IngestionKeys["client"] = "original-secret";
+        _options.AutoLoginAllowedApplications = ["client"];
         var _key = Assert.IsType<AutoLoginKey>((await _keys.Authenticate("original-secret", default)).Data);
         var _principal = CreatePrincipal(_key);
         using var _codes = new AutoLoginCodeStore(_clock);
@@ -297,7 +303,37 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
         Assert.False(await _authentication.IsCurrent(_principal, default));
     }
 
-    private async Task<(IngestionApplication Application, string Secret)> CreateDatabaseKey(bool isMcpReadKey = false)
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DatabaseKeysWithoutAutoLoginPermissionCannotAuthenticate(bool isMcpReadKey)
+    {
+        var (_, _secret) = await CreateDatabaseKey(isMcpReadKey, allowAutoLogin: false);
+
+        var _result = await _keys.Authenticate(_secret, default);
+
+        Assert.False(_result.HasError);
+        Assert.Null(_result.Data);
+    }
+
+    [Fact]
+    public async Task ConfiguredKeysRequireExplicitPermissionAndRemovingItInvalidatesSession()
+    {
+        _options.IngestionKeys["client"] = "configured-secret";
+        Assert.Null((await _keys.Authenticate("configured-secret", default)).Data);
+
+        _options.AutoLoginAllowedApplications = ["client"];
+        var _key = Assert.IsType<AutoLoginKey>((await _keys.Authenticate("configured-secret", default)).Data);
+        var _principal = CreatePrincipal(_key);
+        Assert.True(await _authentication.IsCurrent(_principal, default));
+
+        _options.AutoLoginAllowedApplications = [];
+        Assert.Null((await _keys.Authenticate("configured-secret", default)).Data);
+        Assert.False(await _keys.IsCurrent(_key, default));
+        Assert.False(await _authentication.IsCurrent(_principal, default));
+    }
+
+    private async Task<(IngestionApplication Application, string Secret)> CreateDatabaseKey(bool isMcpReadKey = false, bool allowAutoLogin = true)
     {
         var _generated = IngestionKeyGenerator.Generate();
         var _application = new IngestionApplication
@@ -305,7 +341,8 @@ public sealed class AutoLoginKeyServiceTests : IAsyncLifetime
             Name = isMcpReadKey ? "MCP client" : "Ingestion client",
             KeyHash = _generated.Hash,
             KeyPrefix = _generated.Prefix,
-            IsMcpReadKey = isMcpReadKey
+            IsMcpReadKey = isMcpReadKey,
+            AllowAutoLogin = allowAutoLogin
         };
         await using var _context = _factory.CreateDbContext();
         _context.IngestionApplications.Add(_application);

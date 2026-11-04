@@ -118,4 +118,22 @@ public sealed partial class TelemetryCqrsTests
         Assert.Empty((await _repository.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
     }
 
+    [Theory]
+    [InlineData("/b2fa/authenticate/01234567-0123-0123-0123-012345678901")]
+    [InlineData("/b2fa/authenticate")]
+    [InlineData("/login/qr-code")]
+    [InlineData("/api/auth/auto-login")]
+    [InlineData("/auto-login")]
+    public async Task AuthenticationRequestsNeverPersistTicketsOrSetupSecrets(string path)
+    {
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Request.Path = path;
+        context.Request.QueryString = new Microsoft.AspNetCore.Http.QueryString("?code=sensitive-token");
+        var called = false;
+        var middleware = new RequestTelemetryMiddleware(_ => { called = true; return Task.CompletedTask; }, NullLogger<RequestTelemetryMiddleware>.Instance);
+        await middleware.InvokeAsync(context, _mediator, new Microsoft.Extensions.Hosting.Internal.HostingEnvironment { ApplicationName = "test" });
+        Assert.True(called);
+        Assert.Empty((await _mediator.Query(new TelemetryQuery(TelemetryKind.Request), CancellationToken.None)).Items);
+    }
+
 }
