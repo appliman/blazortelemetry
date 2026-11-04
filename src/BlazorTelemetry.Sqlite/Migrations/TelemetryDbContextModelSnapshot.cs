@@ -15,7 +15,26 @@ namespace BlazorTelemetry.Sqlite.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.14");
+
+            modelBuilder.Entity("BlazorTelemetry.Core.AdministratorTotpState", b =>
+                {
+                    b.Property<string>("Identifier")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("LastAcceptedInterval")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SecretVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Identifier");
+
+                    b.ToTable("AdministratorTotpStates");
+                });
 
             modelBuilder.Entity("BlazorTelemetry.Core.AlertRule", b =>
                 {
@@ -152,6 +171,11 @@ namespace BlazorTelemetry.Sqlite.Migrations
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowAutoLogin")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.Property<long>("CreatedUtc")
                         .HasColumnType("INTEGER");

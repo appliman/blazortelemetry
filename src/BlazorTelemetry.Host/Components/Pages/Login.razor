@@ -1,58 +1,9 @@
 @page "/login"
-@rendermode InteractiveServer
-@implements IDisposable
-@using BlazorTelemetry.Host.Authentication
 @inject NavigationManager Navigation
-@inject UserAuthenticationService Authentication
-@inject Blazor2faAuthenticationTicketStore TicketStore
 
 @code {
-    private readonly CancellationTokenSource _lifetime = new();
-
-    public void Dispose()
-    {
-        _lifetime.Cancel();
-        _lifetime.Dispose();
-    }
-
     [SupplyParameterFromQuery(Name = "returnUrl")] public string? ReturnUrl { get; set; }
-    private LoginForm _form = new();
-    private string? _error;
-    private bool _busy;
-    private bool _interactiveReady;
-
-    protected override void OnAfterRender(bool firstRender)
-    {
-        if (firstRender)
-        {
-            _interactiveReady = true;
-            StateHasChanged();
-        }
-    }
-
-    private async Task SignIn()
-    {
-        if (_busy)
-        {
-            return;
-        }
-        _busy = true;
-        try
-        {
-            var _claims = await Authentication.Authenticate(_form.Identifier ?? "", _form.Digicode ?? "", null, _lifetime.Token);
-            if (_claims is null)
-            {
-                _error = "The identifier or authentication code is invalid, or access is unavailable. New users must set up their authenticator first.";
-                return;
-            }
-            var _target = !string.IsNullOrWhiteSpace(ReturnUrl) && ReturnUrl.StartsWith('/') && !ReturnUrl.StartsWith("//") && !ReturnUrl.StartsWith("/\\") ? ReturnUrl : "/";
-            Navigation.NavigateTo($"/b2fa/authenticate/{TicketStore.Issue(_claims)}?ReturnUrl={Uri.EscapeDataString(_target)}", true);
-        }
-        finally
-        {
-            _busy = false;
-        }
-    }
+    [SupplyParameterFromQuery(Name = "error")] public bool Error { get; set; }
 }
 
 <ApplicationPageTitle>Sign in</ApplicationPageTitle>
@@ -60,16 +11,17 @@
     <div class="auth-card mx-auto">
         <span class="auth-label">Secure access</span><h1>Sign in</h1>
         <p>Enter your identifier and the current code from your authenticator app.</p>
-        @if (_error is not null)
+        @if (Error)
         {
-            <div class="alert alert-danger" role="alert">@_error</div>
+            <div class="alert alert-danger" role="alert">The identifier or authentication code is invalid, or access is unavailable. New users must set up their authenticator first.</div>
         }
-        <EditForm Model="_form" OnValidSubmit="SignIn" FormName="loginform2fa">
-            <DataAnnotationsValidator /><ValidationSummary />
-            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="identifier" class="form-control" placeholder="Identifier" @bind-Value="_form.Identifier" autocomplete="username" maxlength="256" /><label for="identifier">Identifier</label></div>
-            <div class="form-floating mb-3"><InputText disabled="@(!_interactiveReady)" id="code" class="form-control" placeholder="Authentication code" @bind-Value="_form.Digicode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><label for="code">Authentication code</label></div>
-            <button class="btn btn-primary" disabled="@(_busy || !_interactiveReady)" type="submit">Sign in</button>
-        </EditForm>
-        <p class="auth-help"><a href="/login/qr-code">Set up your authenticator</a></p>
+        <form method="post" action="@(new Uri(new Uri(Navigation.BaseUri), "b2fa/authenticate").AbsolutePath)" data-enhance="false">
+            <AntiforgeryToken />
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+            <div class="form-floating mb-3"><input required id="identifier" name="identifier" class="form-control" placeholder="Identifier" autocomplete="username" maxlength="256" /><label for="identifier">Identifier</label></div>
+            <div class="form-floating mb-3"><input required id="code" name="code" class="form-control" placeholder="Authentication code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" /><label for="code">Authentication code</label></div>
+            <button class="btn btn-primary" type="submit">Sign in</button>
+        </form>
+        <p class="auth-help"><a href="login/qr-code">Set up your authenticator</a></p>
     </div>
 </main>

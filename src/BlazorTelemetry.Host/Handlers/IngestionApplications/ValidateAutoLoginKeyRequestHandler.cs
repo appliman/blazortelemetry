@@ -19,7 +19,7 @@ internal sealed class ValidateAutoLoginKeyRequestHandler(
             await using var _context = await contextFactory.CreateDbContextAsync(cancellationToken);
             var _now = timeProvider.GetUtcNow();
             var _key = await _context.IngestionApplications.AsNoTracking().FirstOrDefaultAsync(
-                value => value.KeyHash == request.KeyHash && value.IsActive && value.RevokedUtc == null
+                value => value.KeyHash == request.KeyHash && value.AllowAutoLogin && value.IsActive && value.RevokedUtc == null
                     && (value.ExpiresUtc == null || value.ExpiresUtc > _now), cancellationToken);
             return new QueryResult<IngestionApplication?> { Data = _key };
         }

@@ -70,6 +70,10 @@
                 <InputCheckbox id="mcp-read-key" class="form-check-input" @bind-Value="_isMcpReadKey" />
                 <label class="form-check-label" for="mcp-read-key">MCP read access (logs, traces, and metrics)</label>
             </div>
+            <div class="form-check mb-3">
+                <InputCheckbox id="auto-login-key" class="form-check-input" @bind-Value="_application.AllowAutoLogin" />
+                <label class="form-check-label" for="auto-login-key">Allow dashboard auto-login (read access to all applications)</label>
+            </div>
             <button type="submit" class="btn btn-primary">Create and reveal key</button>
         </EditForm>
     }

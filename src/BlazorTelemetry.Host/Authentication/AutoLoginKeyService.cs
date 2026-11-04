@@ -17,7 +17,8 @@ public sealed class AutoLoginKeyService(IMediator repository, BlazorTelemetryOpt
         var _hash = IngestionKeyGenerator.ComputeHash(supplied);
         foreach (var _entry in options.IngestionKeys)
         {
-            if (IngestionKeyGenerator.ComputeHash(_entry.Value) == _hash)
+            if (options.AutoLoginAllowedApplications.Contains(_entry.Key, StringComparer.Ordinal)
+                && IngestionKeyGenerator.ComputeHash(_entry.Value) == _hash)
             {
                 return new QueryResult<AutoLoginKey?> { Data = new AutoLoginKey("configuration", _entry.Key, _hash, _entry.Key) };
             }
@@ -37,7 +38,9 @@ public sealed class AutoLoginKeyService(IMediator repository, BlazorTelemetryOpt
     {
         if (key.Source == "configuration")
         {
-            return options.IngestionKeys.TryGetValue(key.Id, out var _value) && IngestionKeyGenerator.ComputeHash(_value) == key.Hash;
+            return options.AutoLoginAllowedApplications.Contains(key.Id, StringComparer.Ordinal)
+                && options.IngestionKeys.TryGetValue(key.Id, out var _value)
+                && IngestionKeyGenerator.ComputeHash(_value) == key.Hash;
         }
         if (key.Source != "database")
         {

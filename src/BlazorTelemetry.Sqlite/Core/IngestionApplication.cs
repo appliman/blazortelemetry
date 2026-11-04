@@ -8,6 +8,7 @@ public sealed class IngestionApplication
     public string KeyPrefix { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public bool IsMcpReadKey { get; set; }
+    public bool AllowAutoLogin { get; set; }
     public DateTimeOffset CreatedUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? ExpiresUtc { get; set; }
     public DateTimeOffset? RevokedUtc { get; set; }

@@ -19,9 +19,13 @@ internal sealed class IngestionKeyAuthorizer(BlazorTelemetryOptions options, ISe
         }
 
         var supplied = values.ToString();
+        if (string.IsNullOrWhiteSpace(supplied))
+        {
+            return (false, null);
+        }
         foreach (var pair in options.IngestionKeys)
         {
-            if (FixedTimeEquals(pair.Value, supplied))
+            if (!string.IsNullOrWhiteSpace(pair.Value) && FixedTimeEquals(pair.Value, supplied))
             {
                 return (true, pair.Key);
             }

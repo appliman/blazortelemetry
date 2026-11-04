@@ -15,6 +15,7 @@ public sealed partial class TelemetryDbContext(DbContextOptions<TelemetryDbConte
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
     public DbSet<TelemetryUser> Users => Set<TelemetryUser>();
+    public DbSet<AdministratorTotpState> AdministratorTotpStates => Set<AdministratorTotpState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -35,11 +36,19 @@ public sealed partial class TelemetryDbContext(DbContextOptions<TelemetryDbConte
 
         ConfigureTelemetry(modelBuilder);
 
+        modelBuilder.Entity<AdministratorTotpState>(entity =>
+        {
+            entity.HasKey(state => state.Identifier);
+            entity.Property(state => state.Identifier).HasMaxLength(256);
+            entity.Property(state => state.SecretVersion).IsRequired().HasMaxLength(64);
+        });
+
         modelBuilder.Entity<IngestionApplication>(entity =>
         {
             entity.HasKey(application => application.Id);
             entity.HasIndex(application => application.KeyHash).IsUnique();
             entity.HasIndex(application => application.Name);
+            entity.Property(application => application.AllowAutoLogin).HasDefaultValue(false);
             entity.Property(application => application.CreatedUtc).HasConversion<long>();
             entity.Property(application => application.ExpiresUtc).HasConversion<long?>();
             entity.Property(application => application.RevokedUtc).HasConversion<long?>();

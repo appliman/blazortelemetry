@@ -14,7 +14,7 @@ public class TwoFactorAuthenticator
 
 	public TwoFactorAuthenticator(bool useManagedSha1, bool useUnmanagedOnFail)
 	{
-		DefaultClockDriftTolerance = TimeSpan.FromMinutes(5);
+		DefaultClockDriftTolerance = TimeSpan.FromSeconds(30);
 		UseManagedSha1Algorithm = useManagedSha1;
 		TryUnmanagedAlgorithmOnFailure = useUnmanagedOnFail;
 	}
@@ -206,7 +206,7 @@ public class TwoFactorAuthenticator
 	public bool ValidateTwoFactorPIN(string accountSecretKey, string twoFactorCodeFromClient, TimeSpan timeTolerance)
 	{
 		var codes = GetCurrentPINs(accountSecretKey, timeTolerance);
-		return codes.Any(c => c == twoFactorCodeFromClient);
+		return codes.Any(c => CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(c), Encoding.ASCII.GetBytes(twoFactorCodeFromClient)));
 	}
 
 	public string GetCurrentPIN(string accountSecretKey)
@@ -230,7 +230,7 @@ public class TwoFactorAuthenticator
 		long iterationCounter = GetCurrentCounter();
 		int iterationOffset = 0;
 
-		if (timeTolerance.TotalSeconds > 30)
+		if (timeTolerance.TotalSeconds >= 30)
 		{
 			iterationOffset = Convert.ToInt32(timeTolerance.TotalSeconds / 30.00);
 		}

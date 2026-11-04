@@ -33,6 +33,7 @@
     private DateTimeOffset _toUtc;
     private string _logLevel = string.Empty;
     private string _requestStatus = string.Empty;
+    private string _requestDirection = string.Empty;
     private bool _paused;
     private bool _loading = true;
     private string? _error;
@@ -136,6 +137,7 @@
             var _queryTrace = _selectedTraceId;
             var _queryLogLevel = _logLevel;
             var _queryRequestStatus = _requestStatus;
+            var _queryRequestDirection = _requestDirection;
             await LoadPanel(() => Repository.GetServices(fromUtc, toUtc, _lifetime.Token), _result => _services = _result.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray(), _finishLoading: false);
             if (_view != "dashboards")
             {
@@ -170,7 +172,8 @@
                     MinimumStatusCode: minimumStatusCode,
                     MaximumStatusCode: maximumStatusCode,
                     HasStatusCode: hasStatusCode,
-                    RequireHttpRequestDetails: _view == "requests"), _lifetime.Token), _result => _page = _result);
+                    RequireHttpRequestDetails: _view == "requests",
+                    IsOutgoingRequest: _view == "requests" ? _queryRequestDirection switch { "in" => false, "out" => true, _ => (bool?)null } : null), _lifetime.Token), _result => _page = _result);
                 if (_view == "metrics" && !_refreshRequested)
                 {
                     if (!_page.Items.Any(_item => _item.Name == _selectedMetric))
@@ -837,6 +840,14 @@
                 else if (_activeView == "requests")
                 {
                     <label class="bt-level-filter">
+                        <span>Direction</span>
+                        <select @bind="_requestDirection" @bind:after="Refresh" aria-label="Filter requests by direction">
+                            <option value="">All directions</option>
+                            <option value="in">in · Incoming</option>
+                            <option value="out">out · Outgoing</option>
+                        </select>
+                    </label>
+                    <label class="bt-level-filter">
                         <span>Status</span>
                         <select @bind="_requestStatus" @bind:after="Refresh" aria-label="Filter requests by status">
                             <option value="">All statuses</option>
@@ -879,12 +890,13 @@
                 }
                 else if (_activeView == "requests")
                 {
-                    <p class="bt-result-count">HTTP duration covers server processing. In progress means no HTTP completion has been recorded yet.</p>
-                    <table class="bt-requests-table"><thead><tr><th>Date / time</th><th>Route</th><th>Method</th><th>IP address</th><th>User agent</th><th>Trace</th><th>Duration</th><th>Status</th></tr></thead><tbody>
+                    <p class="bt-result-count">Incoming duration covers server processing; outgoing duration covers the HTTP client call. In progress means no HTTP completion has been recorded yet.</p>
+                    <table class="bt-requests-table"><thead><tr><th>Date / time</th><th>In / Out</th><th>Route</th><th>Method</th><th>IP address</th><th>User agent</th><th>Trace</th><th>Duration</th><th>Status</th></tr></thead><tbody>
                     @foreach (var _item in _page.Items)
                     {
                         <tr @key="_item.Id">
                             <td class="mono">@_item.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</td>
+                            <td><span class="bt-type">@(_item.SpanKind == "Client" ? "out" : "in")</span></td>
                             <td class="bt-request-route">@_item.Name</td>
                             <td class="mono">@_item.Body</td>
                             <td class="mono">@RequestIp(_item)</td>

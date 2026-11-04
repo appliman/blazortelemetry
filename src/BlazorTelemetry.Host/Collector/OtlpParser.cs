@@ -111,7 +111,10 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                         Fingerprint = Hash($"trace:{traceId}:{spanId}")
                     });
 
-                    if (span.Kind == OpenTelemetry.Proto.Trace.V1.Span.Types.SpanKind.Server)
+                    var _httpMethod = GetString(attributes, "http.request.method") ?? GetString(attributes, "http.method");
+                    var _isHttpClient = span.Kind == OpenTelemetry.Proto.Trace.V1.Span.Types.SpanKind.Client
+                        && !string.IsNullOrWhiteSpace(_httpMethod) && _httpMethod.Trim() != "—";
+                    if (span.Kind == OpenTelemetry.Proto.Trace.V1.Span.Types.SpanKind.Server || _isHttpClient)
                     {
                         AddItem(result, new TelemetryItem
                         {
@@ -122,7 +125,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             ServiceVersion = GetString(resource, "service.version"),
                             Environment = GetString(resource, "deployment.environment.name") ?? GetString(resource, "deployment.environment"),
                             Name = RequestName(span.Name, attributes),
-                            Body = GetString(attributes, "http.request.method") ?? GetString(attributes, "http.method") ?? "—",
+                            Body = _httpMethod ?? "—",
                             TraceId = traceId,
                             SpanId = spanId,
                             ParentSpanId = ToHex(span.ParentSpanId),
@@ -133,7 +136,7 @@ internal sealed class OtlpParser(OtlpValueConverter valueConverter)
                             ScopeName = scopeSpans.Scope?.Name,
                             ScopeVersion = scopeSpans.Scope?.Version,
                             SpanKind = span.Kind.ToString(),
-                            Source = "OTLP server span",
+                            Source = _isHttpClient ? "OTLP client span" : "OTLP server span",
                             Fingerprint = Hash($"request:{traceId}:{spanId}")
                         });
                     }

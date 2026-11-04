@@ -12,12 +12,16 @@ using BlazorTelemetry.Host.Mcp;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.EntityFrameworkCore;
+using BlazorTelemetry.Sqlite;
 
 using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
+builder.Services.AddTelemetryHttpSecurity(builder.Configuration);
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<UserAttemptLimiter>();
@@ -38,6 +42,10 @@ twoFactorConfiguration.ApplicationName = string.IsNullOrWhiteSpace(twoFactorConf
 	? $"{builder.Environment.EnvironmentName} Administrator"
 	: twoFactorConfiguration.ApplicationName.Trim();
 builder.AddBlazor2fa(twoFactorConfiguration);
+if (!builder.Environment.IsDevelopment())
+{
+    twoFactorConfiguration.ValidateProductionConfiguration();
+}
 builder.Services.AddControllersWithViews();
 
 builder.Services.AddAuthentication(options =>
@@ -76,7 +84,9 @@ var baseTelemetryOptions = builder.Configuration
 	.GetSection(BlazorTelemetryOptions.SECTION_NAME)
 	.Get<BlazorTelemetryOptions>() ?? new BlazorTelemetryOptions();
 
-var optionsOverrideStore = new TelemetryOptionsOverrideStore(baseTelemetryOptions.ConnectionString);
+var secretStorage = SecretStorageProtection.Create(builder.Configuration.GetSection("SecretStorage"), builder.Environment.IsDevelopment(), baseTelemetryOptions.ConnectionString);
+builder.Services.AddSingleton(secretStorage);
+var optionsOverrideStore = new TelemetryOptionsOverrideStore(baseTelemetryOptions.ConnectionString, secretStorage.Provider);
 builder.Services.AddSingleton(optionsOverrideStore);
 builder.Services.AddBlazorTelemetry(builder.Configuration, optionsOverrideStore.Apply);
 builder.Services.AddMcpServer()
@@ -99,16 +109,20 @@ if (initialization.HasError)
 {
 	throw new InvalidOperationException(initialization.BrokenRules[0].Message);
 }
+await app.Services.GetRequiredService<DataProtectionKeyRepository>().ProtectExistingKeys(
+    app.Services.GetRequiredService<IDbContextFactory<TelemetryDbContext>>(), app.Lifetime.ApplicationStopping);
 app.Logger.LogInformation(
 	"2FA authenticator entry configured as {Issuer}:{ApplicationName}",
 	twoFactorConfiguration.Issuer,
 	twoFactorConfiguration.ApplicationName);
+app.UseForwardedHeaders();
 if (!app.Environment.IsDevelopment())
 {
 	app.UseExceptionHandler("/Error", createScopeForErrors: true);
 	app.UseHsts();
 }
 
+app.UseTelemetryHttpSecurity();
 app.UseWhen(
 	context => !context.Request.Path.StartsWithSegments("/v1") && !context.Request.Path.StartsWithSegments("/blazor-telemetry") && !context.Request.Path.StartsWithSegments("/mcp") && !context.Request.Path.StartsWithSegments("/api/auth/auto-login"),
 	branch => branch.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true));
@@ -123,7 +137,7 @@ app.MapStaticAssets();
 app.MapHealthChecks("/health/live").AllowAnonymous();
 app.MapBlazorTelemetry();
 app.MapMcp("/mcp");
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = "'none'");
 app.Run();
 
 public partial class Program;

@@ -19,8 +19,9 @@ public sealed class BlazorTelemetryOptions
     public int EvaluationIntervalSeconds { get; set; } = 30;
     public string ReaderPolicy { get; set; } = "BlazorTelemetryReader";
     public string AdministratorPolicy { get; set; } = "BlazorTelemetryAdministrator";
-    public bool RequireIngestionKey { get; set; }
+    public bool RequireIngestionKey { get; set; } = true;
     public Dictionary<string, string> IngestionKeys { get; set; } = new(StringComparer.Ordinal);
+    public string[] AutoLoginAllowedApplications { get; set; } = [];
     public string[] SensitiveAttributePatterns { get; set; } = ["password", "secret", "token", "authorization", "cookie"];
     public WebhookOptions Webhook { get; set; } = new();
     public SmtpOptions Smtp { get; set; } = new();
