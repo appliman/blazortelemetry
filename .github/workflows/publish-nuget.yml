@@ -34,16 +34,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up .NET 10
+      - name: Set up .NET 11
         uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 11.0.x
 
       - name: Restore
-        run: dotnet restore ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }}
+        run: |
+          dotnet restore ${{ env.CLIENT_PACKAGE_PROJECT }}
+          dotnet restore ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }}
 
       - name: Build
-        run: dotnet build ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }} --configuration Release --no-restore
+        run: |
+          dotnet build ${{ env.CLIENT_PACKAGE_PROJECT }} --configuration Release --no-restore
+          dotnet build ${{ env.CHANNEL_MEDIATOR_PACKAGE_PROJECT }} --configuration Release --no-restore
 
       - name: Pack BlazorTelemetryClient
         run: dotnet pack ${{ env.CLIENT_PACKAGE_PROJECT }} --configuration Release --no-build --output ${{ env.PACKAGE_OUTPUT }}

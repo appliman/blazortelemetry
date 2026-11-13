@@ -6,7 +6,7 @@
 
 Collect, correlate, and explore your OpenTelemetry **logs**, **traces**, and **metrics** over OTLP gRPC or HTTP/protobuf without operating a full distributed observability stack.
 
-[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![.NET 11](https://img.shields.io/badge/.NET-11-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 [![Blazor](https://img.shields.io/badge/Blazor-Server%20%2F%20SSR-5C2D91?logo=blazor&logoColor=white)](https://dotnet.microsoft.com/apps/aspnet/web-apps/blazor)
 [![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-OTLP%20gRPC%20%2B%20HTTP%2Fprotobuf-4F62AD?logo=opentelemetry&logoColor=white)](https://opentelemetry.io/)
 [![SQLite](https://img.shields.io/badge/Storage-SQLite-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
@@ -112,6 +112,8 @@ The telemetry database and ASP.NET Core Data Protection keys are persisted in th
 
 ## Instrument a Blazor or ASP.NET Core application
 
+`BlazorTelemetryClient` supports .NET 10 and .NET 11. NuGet selects the assembly that matches the application's target framework.
+
 Install the preconfigured client from NuGet.org:
 
 ```bash
@@ -162,7 +164,9 @@ The Entity Framework metrics classify completed commands as `read`, `insert`, `u
 
 ### ChannelMediator instrumentation
 
-Install the optional ChannelMediator integration:
+The optional `BlazorTelemetryClient.ChannelMediator` integration targets .NET 11.
+
+Install the integration:
 
 ```bash
 dotnet add package BlazorTelemetryClient.ChannelMediator
@@ -260,6 +264,8 @@ docker compose -f docker-compose.prod.yml up -d
 Traefik handles HTTP-to-HTTPS redirection, TLS certificates, and routing to the internal port `8080`. The `/health/live` endpoint is used for health checks.
 
 ## Development
+
+Build and run the solution with the .NET 11 SDK. The host targets .NET 11, and Runtime Async is enabled for the solution's .NET 11 targets.
 
 ```bash
 dotnet restore BlazorTelemetry.slnx
