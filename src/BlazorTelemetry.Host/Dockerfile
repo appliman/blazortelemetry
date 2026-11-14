@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM mcr.microsoft.com/dotnet/aspnet:10.0.14-noble AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0.0-resolute AS runtime
 WORKDIR /app
 EXPOSE 8080
 EXPOSE 4317
@@ -7,16 +7,19 @@ ENV DOTNET_EnableDiagnostics=0 \
     TZ=Europe/Paris \
     BlazorTelemetry__ConnectionString="Data Source=/data/telemetry.db;Cache=Shared"
 RUN apt-get update \
+    && apt-get install -y --no-install-recommends --only-upgrade perl-base \
     && apt-get install -y --no-install-recommends curl libpcre2-8-0 \
+    && rm -f /usr/bin/pebble \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data \
     && chown -R $APP_UID:$APP_UID /data /app
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0.403-noble AS build
+FROM mcr.microsoft.com/dotnet/sdk:11.0.100-resolute AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade libbrotli1 libpcre2-8-0 \
+    && apt-get install -y --no-install-recommends --only-upgrade libbrotli1 libpcre2-8-0 perl-base \
+    && rm -f /usr/bin/pebble \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN dotnet restore BlazorTelemetry.Host/BlazorTelemetry.Host.csproj

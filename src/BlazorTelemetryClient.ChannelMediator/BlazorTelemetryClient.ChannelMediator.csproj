@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
+    <Features>$(Features);runtime-async=on</Features>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.0.3.1</Version>
+    <Version>2.0.4.0</Version>
     <AssemblyName>BlazorTelemetryClient.ChannelMediator</AssemblyName>
     <RootNamespace>BlazorTelemetry.Client.ChannelMediator</RootNamespace>
 

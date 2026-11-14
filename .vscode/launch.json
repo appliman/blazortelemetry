@@ -6,7 +6,7 @@
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build BlazorTelemetry.Host",
-            "program": "${workspaceFolder}/src/BlazorTelemetry.Host/bin/Debug/net10.0/BlazorTelemetry.Host.dll",
+            "program": "${workspaceFolder}/src/BlazorTelemetry.Host/bin/Debug/net11.0/BlazorTelemetry.Host.dll",
             "cwd": "${workspaceFolder}/src/BlazorTelemetry.Host",
             "launchSettingsFilePath": "${workspaceFolder}/src/BlazorTelemetry.Host/Properties/launchSettings.json",
             "launchSettingsProfile": "http",
