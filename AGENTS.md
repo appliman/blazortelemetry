@@ -120,3 +120,9 @@ Les instructions spécifiques de ce projet et les fichiers `AGENTS.md` plus proc
 
 - Toujours demander confirmation a l'utilisateur avant d'effectuer des actions qui ne sont pas explicitement demandees, meme si elles semblent logiques ou coherentes.
 - Ne jamais creer, modifier ou supprimer de fichiers supplementaires sans accord explicite de l'utilisateur.
+
+## Vérification quotidienne des images Docker
+
+- Appliquer la règle générale Appliman : vérifier les images Docker une seule fois par jour civil dans le fuseau `Europe/Paris`, pour les mêmes Dockerfile et références d'images. Lors des demandes de commit et push suivantes le même jour, réutiliser la trace persistante sans relancer la résolution des tags, la construction ou le scan des mêmes images.
+- Conserver hors du dépôt le manifeste `V:\Codex\cache\docker-security\<projet>\<AAAA-MM-JJ>\daily-verification.json` et les rapports du scanner. Y enregistrer le dépôt, les chemins et empreintes SHA-256 des Dockerfile, les références et digests des images, la date UTC, la date locale Europe/Paris, l'état de la vérification et les vulnérabilités détectées, sans secret. Consulter cette trace avant toute nouvelle vérification et indiquer sa réutilisation dans le compte rendu.
+- Les vulnérabilités résiduelles ne justifient pas de refaire le même scan ; conserver leur signalement et les règles de décision du fichier général. Un échec ou une vérification incomplète reste identifié comme tel, sans être présenté comme une réussite. Un Dockerfile ou une référence d'image réellement ajouté ou modifié constitue un nouvel ensemble à vérifier ; sinon, refaire la vérification au prochain besoin un autre jour.

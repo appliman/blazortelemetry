@@ -12,6 +12,7 @@ a { color: #76e4b8; }
 .auth-card { width: min(100%, 34rem); padding: clamp(1.5rem, 4vw, 2.75rem); border: 1px solid #27343d; border-radius: 1rem; background: #111820; box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, .35); }
 .auth-card h1 { margin: .4rem 0 .75rem; }
 .auth-card p { color: #aebdc6; }
+.auth-card .form-floating > label { color: var(--bs-body-color); }
 .auth-label { color: #76e4b8; font-size: .75rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .auth-help { margin: 1.5rem 0 0; }
 .user-edit-form .form-floating > label { color: var(--bs-body-color); }
