@@ -4,4 +4,8 @@ using ChannelMediator;
 
 namespace BlazorTelemetry.Host.Contracts.Models.Metrics;
 
-public sealed record GetMetricSeriesRequest(string Name, string? ServiceName, DateTimeOffset FromUtc, DateTimeOffset? ToUtc) : IRequest<QueryResult<IReadOnlyList<MetricSeriesPoint>>>;
+public sealed record GetMetricSeriesRequest(string Name, string? ServiceName, DateTimeOffset FromUtc, DateTimeOffset? ToUtc) : IRequest<QueryResult<IReadOnlyList<MetricSeriesPoint>>>
+{
+    internal TelemetryItem? Sample { get; init; }
+    internal int MaximumPoints { get; init; } = 2_000;
+}
