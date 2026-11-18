@@ -43,7 +43,16 @@
     private IReadOnlyList<Incident> _incidents = [];
     private AlertRule _newRule = CreateRule();
     private string? _selectedTraceId;
-    private string? _selectedMetric;
+    private string? _metricMeter;
+    private string _metricSearchText = string.Empty;
+    private string _metricSearch = string.Empty;
+    private ILookup<(string Service, string Meter, string Name), TelemetryItem> _metricInstruments = Array.Empty<TelemetryItem>().ToLookup(MetricIdentity);
+    private TelemetryItem? _selectedMetric;
+    private ElementReference _metricCloseButton;
+    private ElementReference _metricContent;
+    private bool _focusMetricDrawer;
+    private (string Service, string Meter, string Name)? _restoreMetric;
+    private bool _loadingMetricSeries;
     private TelemetryItem? _selectedLog;
     private TelemetryItem? _selectedSpan;
     private readonly HashSet<long> _collapsedSpans = [];
@@ -133,7 +142,7 @@
                 _fromUtc = fromUtc;
                 _toUtc = toUtc;
             }
-            var _querySearch = _search;
+            var _querySearch = _view == "metrics" ? _metricSearch : _search;
             var _queryTrace = _selectedTraceId;
             var _queryLogLevel = _logLevel;
             var _queryRequestStatus = _requestStatus;
@@ -141,7 +150,7 @@
             await LoadPanel(() => Repository.GetServices(fromUtc, toUtc, _lifetime.Token), _result => _services = _result.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray(), _finishLoading: false);
             if (_view != "dashboards")
             {
-                await LoadPanel(() => Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService), _result => _summary = _result with { Services = _result.Services.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray() });
+                await LoadPanel(() => Repository.GetSummary(fromUtc, _lifetime.Token, toUtc, _selectedService), _result => _summary = _result with { Services = _result.Services.Where(service => !string.Equals(service, HostEnvironment.ApplicationName, StringComparison.Ordinal)).ToArray() }, _finishLoading: _view != "metrics");
             }
             if (_view is "logs" or "traces" or "metrics" or "requests")
             {
@@ -173,19 +182,17 @@
                     MaximumStatusCode: maximumStatusCode,
                     HasStatusCode: hasStatusCode,
                     RequireHttpRequestDetails: _view == "requests",
-                    IsOutgoingRequest: _view == "requests" ? _queryRequestDirection switch { "in" => false, "out" => true, _ => (bool?)null } : null), _lifetime.Token), _result => _page = _result);
-                if (_view == "metrics" && !_refreshRequested)
+                    IsOutgoingRequest: _view == "requests" ? _queryRequestDirection switch { "in" => false, "out" => true, _ => (bool?)null } : null), _lifetime.Token), _result =>
                 {
-                    if (!_page.Items.Any(_item => _item.Name == _selectedMetric))
+                    _page = _result;
+                    if (_view == "metrics")
                     {
-                        _selectedMetric = _page.Items.FirstOrDefault()?.Name;
+                        _metricInstruments = _result.Items.ToLookup(MetricIdentity);
                     }
-                    _series = [];
-                    if (_selectedMetric is not null)
-                    {
-                        var _name = _selectedMetric;
-                        await LoadPanel(() => Repository.GetMetricSeries(_name, _selectedService, fromUtc, _lifetime.Token, toUtc), _result => _series = _result);
-                    }
+                });
+                if (_view == "metrics" && _selectedMetric is { } _metric)
+                {
+                    await LoadMetricDetails(_metric, fromUtc, toUtc);
                 }
             }
             else if (_view == "alerts")
@@ -282,7 +289,7 @@
         _loading = true;
         _summary = new(0, 0, 0, 0, 0, 0, null, null, []);
         _page = new([], 0, false);
-        _series = [];
+        ResetMetrics();
         _dashboardTraces = [];
         _dashboardLogs = [];
         _dashboardMetrics = [];
@@ -291,7 +298,6 @@
         _selectedTraceId = null;
         _selectedLog = null;
         _selectedSpan = null;
-        _selectedMetric = null;
         _collapsedSpans.Clear();
         _expandedTraces.Clear();
         await Refresh();
@@ -299,6 +305,10 @@
 
     private async Task SelectView(string view)
     {
+        if (view == "metrics" && _activeView != view)
+        {
+            _loading = true;
+        }
         _activeView = view;
         _selectedTraceId = null;
         _selectedLog = null;
@@ -323,7 +333,11 @@
         if (view is not ("logs" or "traces" or "metrics" or "requests"))
         {
             _page = new TelemetryPage([], 0, false);
-            _series = [];
+        }
+
+        if (view != "metrics")
+        {
+            ResetMetrics();
         }
 
         if (view != "alerts")
@@ -449,10 +463,126 @@
     private static double SpanDuration(TelemetryItem _item) => _item.DurationMs is double _duration && double.IsFinite(_duration) ? Math.Max(0, _duration) : 0;
     private static string TraceNumber(double _value) => _value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
-    private async Task SelectMetric(string name)
+    private static (string Service, string Meter, string Name) MetricIdentity(TelemetryItem _item)
     {
-        _selectedMetric = name;
+        var _result = (_item.ServiceName, _item.ScopeName ?? string.Empty, _item.Name);
+        return _result;
+    }
+
+    private static string MetricValue(double? _value)
+    {
+        if (_value is not double _number || !double.IsFinite(_number))
+        {
+            return "—";
+        }
+
+        var _result = Math.Abs(_number) switch
+        {
+            >= 1e12 => $"{_number / 1e12:0.##}T",
+            >= 1e9 => $"{_number / 1e9:0.##}B",
+            >= 1e6 => $"{_number / 1e6:0.##}M",
+            >= 1e3 => $"{_number / 1e3:0.##}K",
+            _ => _number.ToString("G4")
+        };
+        return _result;
+    }
+
+    private static List<MetricSeriesPoint> MetricSamples(IEnumerable<TelemetryItem> _items, TelemetryItem _latest, int _limit)
+    {
+        var _seriesKey = MetricCounter.SeriesKey(_latest);
+        // Use one resource and attribute series so the chart never joins unrelated measurements.
+        var _result = _items
+            .Where(_item => _item.NumericValue is double _value && double.IsFinite(_value)
+                && _item.MetricType == _latest.MetricType && _item.Unit == _latest.Unit
+                && MetricCounter.SeriesKey(_item) == _seriesKey)
+            .Take(_limit)
+            .Reverse()
+            .Select(_item => new MetricSeriesPoint(_item.TimestampUtc, _item.NumericValue.GetValueOrDefault()))
+            .ToList();
+        return _result;
+    }
+
+    private static string MetricTrend(IReadOnlyList<MetricSeriesPoint> _samples)
+    {
+        var _minimum = _samples.Min(_sample => _sample.Value);
+        var _maximum = _samples.Max(_sample => _sample.Value);
+        var _scale = Math.Max(Math.Abs(_minimum), Math.Abs(_maximum));
+        var _duration = (_samples[^1].TimestampUtc - _samples[0].TimestampUtc).TotalMilliseconds;
+        var _result = string.Join(' ', _samples.Select((_sample, _index) =>
+        {
+            var _fraction = _duration > 0 ? (_sample.TimestampUtc - _samples[0].TimestampUtc).TotalMilliseconds / _duration : (double)_index / (_samples.Count - 1);
+            var _height = _minimum == _maximum ? 14 : 26 - 24 * (_sample.Value / _scale - _minimum / _scale) / (_maximum / _scale - _minimum / _scale);
+            return $"{TraceNumber(2 + 176 * _fraction)},{TraceNumber(_height)}";
+        }));
+        return _result;
+    }
+
+    private void ResetMetrics()
+    {
+        _metricInstruments = Array.Empty<TelemetryItem>().ToLookup(MetricIdentity);
+        _selectedMetric = null;
+        _focusMetricDrawer = false;
+        _restoreMetric = null;
+        _loadingMetricSeries = false;
+        _series = [];
+    }
+
+    private async Task SearchMetrics()
+    {
+        _metricSearch = _metricSearchText.Trim();
+        _metricMeter = null;
         await Refresh();
+    }
+
+    private async Task SelectMetric(TelemetryItem _metric)
+    {
+        _selectedMetric = _metric;
+        _focusMetricDrawer = true;
+        _restoreMetric = null;
+        _loadingMetricSeries = true;
+        _series = [];
+        await Refresh();
+    }
+
+    private async Task LoadMetricDetails(TelemetryItem _metric, DateTimeOffset _from, DateTimeOffset _to)
+    {
+        await LoadPanel(async () =>
+        {
+            var _page = await Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _metric.ServiceName,
+                FromUtc: _from, ToUtc: _to, Take: Options.MaximumQueryRows, Name: _metric.Name), _lifetime.Token);
+            var _result = MetricSamples(_page.Items, _metric, Options.MaximumQueryRows);
+            return _result;
+        }, _result =>
+        {
+            if (_selectedMetric == _metric)
+            {
+                _series = _result;
+            }
+        });
+
+        if (_selectedMetric == _metric && !_refreshRequested)
+        {
+            _loadingMetricSeries = false;
+        }
+    }
+
+    private void CloseMetric()
+    {
+        if (_selectedMetric is { } _metric)
+        {
+            _restoreMetric = MetricIdentity(_metric);
+        }
+        _selectedMetric = null;
+        _focusMetricDrawer = false;
+        _series = [];
+    }
+
+    private void HandleMetricDrawerKey(KeyboardEventArgs _args)
+    {
+        if (_args.Key == "Escape")
+        {
+            CloseMetric();
+        }
     }
 
     private async Task<bool> HasAccess(string policy)
@@ -678,6 +808,26 @@
             _dashboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./telemetry-chart.js");
             await _dashboardModule.InvokeVoidAsync("focusById", $"bt-log-row-{logId}");
         }
+        if (_focusMetricDrawer)
+        {
+            _focusMetricDrawer = false;
+            await _metricCloseButton.FocusAsync();
+        }
+        else if (_restoreMetric is { } _instrument)
+        {
+            _restoreMetric = null;
+            var _sample = _metricInstruments[_instrument].FirstOrDefault();
+            var _target = _sample is null ? "bt-metric-search" : $"bt-metric-card-{_sample.Id}";
+            try
+            {
+                _dashboardModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./telemetry-chart.js");
+                await _dashboardModule.InvokeVoidAsync("focusById", _target);
+            }
+            catch (JSDisconnectedException)
+            {
+                // Focus cannot be restored after the circuit disconnects.
+            }
+        }
     }
     private static string ShortId(string? value) => string.IsNullOrWhiteSpace(value) ? "—" : value.Length <= 10 ? value : value[..10];
     private static string SeverityClass(TelemetryItem item)
@@ -795,7 +945,7 @@
 }
 
 <TelemetryShell ActiveView="@_activeView" ActiveIncidents="@_summary.ActiveIncidents" ViewChanged="SelectView" SidebarFooter="SidebarFooter">
-    <main class="bt-main">
+    <main class="bt-main @(_activeView == "metrics" ? "bt-main-metrics" : null)">
         <header class="bt-toolbar">
             <div>
                 @if (_activeView != "dashboards")
@@ -806,7 +956,7 @@
                 <span class="bt-toolbar-health"><i></i> Collector active <small>OTLP · HTTP/protobuf</small></span>
             </div>
             <div class="bt-toolbar-actions">
-                @if (_activeView != "dashboards")
+                @if (_activeView is not ("dashboards" or "metrics"))
                 {
                     <label class="bt-search"><span class="visually-hidden">Search</span><input @bind="_search" @bind:event="oninput" @onchange="Refresh" placeholder="Search telemetry" /></label>
                 }
@@ -872,16 +1022,93 @@
         {
             <div class="bt-loading" aria-live="polite"><span></span>Loading signals…</div>
         }
-        else if (_activeView is "logs" or "traces" or "metrics" or "requests")
+        else if (_activeView == "metrics")
         {
-            <div class="@(_activeView == "metrics" ? "bt-metrics-view" : "bt-signal-view")">
-                @if (_activeView == "metrics" && _selectedMetric is not null)
-                {
-                    <section class="bt-metric-focus">
-                        <div class="bt-section-heading"><div><h2>@_selectedMetric</h2><p>@_series.Count points · selected period</p></div></div>
-                        <TelemetryChart Labels="@_series.Select(point => point.TimestampUtc.ToLocalTime().ToString("HH:mm:ss")).ToList()" Values="@_series.Select(point => point.Value).ToList()" />
-                    </section>
-                }
+            var _meters = _metricInstruments.ToLookup(_instrument => _instrument.Key.Meter, StringComparer.Ordinal);
+            var _visibleInstruments = _metricMeter is null ? _metricInstruments.AsEnumerable() : _meters[_metricMeter];
+            var _servicesWithMetrics = _visibleInstruments.GroupBy(_instrument => _instrument.Key.Service, StringComparer.Ordinal).OrderBy(_group => _group.Key, StringComparer.OrdinalIgnoreCase);
+            <div class="bt-metrics-view">
+                <aside class="bt-metric-filters" aria-label="Instrument filters">
+                    <form class="bt-metric-search" @onsubmit="SearchMetrics" @onsubmit:preventDefault>
+                        <div class="form-floating">
+                            <input id="bt-metric-search" class="form-control" type="search" placeholder="Filter instruments" @bind="_metricSearchText" @bind:event="oninput" />
+                            <label for="bt-metric-search">Find metrics</label>
+                        </div>
+                        <button type="submit">Search</button>
+                    </form>
+                    <div class="bt-metric-meters" role="group" aria-label="Instrumentation sources">
+                        <button type="button" aria-pressed="@(_metricMeter is null ? "true" : "false")" @onclick="() => _metricMeter = null">
+                            <span>All instruments</span><span class="bt-metric-count">@_metricInstruments.Count</span>
+                        </button>
+                        @foreach (var _meter in _meters.OrderBy(_group => _group.Key, StringComparer.OrdinalIgnoreCase))
+                        {
+                            var _label = string.IsNullOrEmpty(_meter.Key) ? "Unknown source" : _meter.Key;
+                            <button type="button" @key="_meter.Key" aria-pressed="@(_metricMeter == _meter.Key ? "true" : "false")" @onclick="() => _metricMeter = _meter.Key" title="@_label">
+                                <span>@_label</span><span class="bt-metric-count">@_meter.Count()</span>
+                            </button>
+                        }
+                    </div>
+                </aside>
+                <section class="bt-metric-catalog" aria-labelledby="bt-metric-catalog-title">
+                    <header class="bt-metric-catalog-header">
+                        <h2 id="bt-metric-catalog-title">@(_metricMeter switch { null => "All instruments", "" => "Unknown source", _ => _metricMeter })</h2>
+                        @if (_page.IsTruncated)
+                        {
+                            <p>Showing instruments from the @_page.Items.Count.ToString("N0") most recent matching samples.</p>
+                        }
+                    </header>
+                    @if (!_visibleInstruments.Any())
+                    {
+                        <div class="bt-empty compact"><strong>No instruments match these filters</strong><p>Try another source, application, or time range.</p></div>
+                    }
+                    @foreach (var _group in _servicesWithMetrics)
+                    {
+                        <section class="bt-metric-service" @key="_group.Key">
+                            <h3>@_group.Key <span class="bt-metric-count">@_group.Count()</span></h3>
+                            <div class="bt-metric-grid">
+                                @foreach (var _instrument in _group.OrderBy(_item => _item.Key.Name, StringComparer.OrdinalIgnoreCase).ThenBy(_item => _item.Key.Meter, StringComparer.OrdinalIgnoreCase))
+                                {
+                                    var _sample = _instrument.First();
+                                    var _samples = MetricSamples(_instrument, _sample, 32);
+                                    <button id="bt-metric-card-@_sample.Id" class="bt-metric-card" type="button" @key="_instrument.Key" aria-haspopup="dialog" @onclick="() => SelectMetric(_sample)">
+                                        <span class="bt-metric-tags">
+                                            @if (!string.IsNullOrEmpty(_instrument.Key.Meter))
+                                            {
+                                                <span title="@_instrument.Key.Meter">@_instrument.Key.Meter</span>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(_sample.MetricType))
+                                            {
+                                                <span>@_sample.MetricType</span>
+                                            }
+                                        </span>
+                                        <strong class="bt-metric-name" title="@_sample.Name">@_sample.Name</strong>
+                                        <span class="bt-metric-description" title="@_sample.Body">@_sample.Body</span>
+                                        <span class="bt-metric-reading" title="@_sample.NumericValue · @FormatUtcTime(_sample.TimestampUtc)">
+                                            <strong>@MetricValue(_sample.NumericValue)</strong>
+                                            <span>@_sample.Unit</span>
+                                        </span>
+                                        <svg class="bt-metric-trend" viewBox="0 0 180 28" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                                            <line class="bt-metric-baseline" x1="0" y1="27" x2="180" y2="27" />
+                                            @if (_samples.Count == 1)
+                                            {
+                                                <line class="bt-metric-trend-line" x1="174" y1="14" x2="178" y2="14" />
+                                            }
+                                            else if (_samples.Count > 1)
+                                            {
+                                                <polyline class="bt-metric-trend-line" points="@MetricTrend(_samples)" />
+                                            }
+                                        </svg>
+                                    </button>
+                                }
+                            </div>
+                        </section>
+                    }
+                </section>
+            </div>
+        }
+        else if (_activeView is "logs" or "traces" or "requests")
+        {
+            <div class="bt-signal-view">
                 <section class="bt-table-region">
                 <div class="bt-result-count">@_page.Total.ToString("N0") results @if (_page.IsTruncated) { <span>· limited to the 200 most recent</span> }</div>
                 @if (_page.Items.Count == 0)
@@ -977,15 +1204,6 @@
                     }
                     </div>
                 }
-                else
-                {
-                    <table><thead><tr><th>Instrument</th><th>Type</th><th>Service</th><th>Value</th><th>Time</th></tr></thead><tbody>
-                    @foreach (var item in _page.Items)
-                    {
-                        <tr class="@(_selectedMetric == item.Name ? "selected" : null)" @onclick="() => SelectMetric(item.Name)"><td><strong>@item.Name</strong><small>@item.Body</small></td><td><span class="bt-type">@item.MetricType</span></td><td>@item.ServiceName</td><td class="mono value">@(item.NumericValue?.ToString("N3") ?? "—") @item.Unit</td><td class="mono">@FormatTime(item.TimestampUtc)</td></tr>
-                    }
-                    </tbody></table>
-                }
                 </section>
             </div>
         }
@@ -1024,6 +1242,60 @@
             <DefaultTelemetryDashboard @key="_service" Summary="_summary" Traces="_dashboardTraces" Logs="_dashboardLogs" Metrics="_dashboardMetrics" Breakdown="_dashboardBreakdown" BlazorMetrics="_blazorDashboard" FromUtc="_fromUtc" ToUtc="_toUtc" />
         }
     </main>
+
+    @if (_activeView == "metrics" && _selectedMetric is { } _detail)
+    {
+        <div class="bt-log-backdrop" role="presentation" @onclick="CloseMetric" @onkeydown="HandleMetricDrawerKey">
+            <aside class="bt-log-drawer" role="dialog" aria-modal="true" aria-labelledby="bt-metric-title" @onclick:stopPropagation="true">
+                <span class="bt-focus-sentinel" tabindex="0" @onfocus="async _ => await _metricContent.FocusAsync()"></span>
+                <header class="bt-log-drawer-header">
+                    <div>
+                        <span class="bt-type">@_detail.MetricType</span>
+                        <h2 id="bt-metric-title">@_detail.Name</h2>
+                        <p>@_detail.ServiceName @if (!string.IsNullOrWhiteSpace(_detail.ScopeName)) { <span>· @_detail.ScopeName</span> }</p>
+                    </div>
+                    <button @ref="_metricCloseButton" class="bt-drawer-close" type="button" aria-label="Close instrument details" title="Close (Escape)" @onclick="CloseMetric">×</button>
+                </header>
+                <div @ref="_metricContent" class="bt-log-drawer-content" tabindex="0" role="region" aria-label="Instrument data">
+                    <section class="bt-log-section bt-metric-detail">
+                        @if (!string.IsNullOrWhiteSpace(_detail.Body))
+                        {
+                            <p>@_detail.Body</p>
+                        }
+                        <h3>Selected series @if (!string.IsNullOrWhiteSpace(_detail.Unit)) { <span>· @_detail.Unit</span> }</h3>
+                        @if (_loadingMetricSeries)
+                        {
+                            <p role="status">Loading samples…</p>
+                        }
+                        else if (_series.Count == 0)
+                        {
+                            <p>No numeric samples for this series in the selected period.</p>
+                        }
+                        else
+                        {
+                            <TelemetryChart AriaLabel="@($"{_detail.Name} time series")" Color="#78a9ff" Values="@_series.Select(_point => _point.Value).ToArray()"
+                                            Timestamps="@_series.Select(_point => _point.TimestampUtc.ToUnixTimeMilliseconds()).ToArray()" FromUtc="_fromUtc" ToUtc="_toUtc" />
+                            <p>@_series.Count.ToString("N0") samples · Latest value <strong>@_series[^1].Value @_detail.Unit</strong></p>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_detail.ServiceInstanceId) || _detail.AttributesJson != "{}")
+                        {
+                            <dl class="bt-attribute-list">
+                                @if (!string.IsNullOrWhiteSpace(_detail.ServiceInstanceId))
+                                {
+                                    <div><dt>Instance</dt><dd><pre>@_detail.ServiceInstanceId</pre></dd></div>
+                                }
+                                @foreach (var _entry in JsonEntries(_detail.AttributesJson))
+                                {
+                                    <div><dt>@_entry.Name</dt><dd><pre>@_entry.Value</pre></dd></div>
+                                }
+                            </dl>
+                        }
+                    </section>
+                </div>
+                <span class="bt-focus-sentinel" tabindex="0" @onfocus="async _ => await _metricCloseButton.FocusAsync()"></span>
+            </aside>
+        </div>
+    }
 
     @if (_selectedSpan is { } _span)
     {
