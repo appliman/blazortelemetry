@@ -53,6 +53,7 @@
     private bool _focusMetricDrawer;
     private (string Service, string Meter, string Name)? _restoreMetric;
     private bool _loadingMetricSeries;
+    private bool _metricSeriesTruncated;
     private TelemetryItem? _selectedLog;
     private TelemetryItem? _selectedSpan;
     private readonly HashSet<long> _collapsedSpans = [];
@@ -524,6 +525,7 @@
         _focusMetricDrawer = false;
         _restoreMetric = null;
         _loadingMetricSeries = false;
+        _metricSeriesTruncated = false;
         _series = [];
     }
 
@@ -540,23 +542,20 @@
         _focusMetricDrawer = true;
         _restoreMetric = null;
         _loadingMetricSeries = true;
+        _metricSeriesTruncated = false;
         _series = [];
         await Refresh();
     }
 
     private async Task LoadMetricDetails(TelemetryItem _metric, DateTimeOffset _from, DateTimeOffset _to)
     {
-        await LoadPanel(async () =>
-        {
-            var _page = await Repository.Query(new TelemetryQuery(TelemetryKind.Metric, _metric.ServiceName,
-                FromUtc: _from, ToUtc: _to, Take: Options.MaximumQueryRows, Name: _metric.Name), _lifetime.Token);
-            var _result = MetricSamples(_page.Items, _metric, Options.MaximumQueryRows);
-            return _result;
-        }, _result =>
+        var _limit = Math.Clamp(Options.MaximumQueryRows, 1, int.MaxValue - 1);
+        await LoadPanel(() => Repository.GetMetricSeries(_metric, _from, _to, _limit + 1, _lifetime.Token), _result =>
         {
             if (_selectedMetric == _metric)
             {
-                _series = _result;
+                _metricSeriesTruncated = _result.Count > _limit;
+                _series = _metricSeriesTruncated ? _result.Skip(1).ToArray() : _result;
             }
         });
 
@@ -1275,7 +1274,17 @@
                         {
                             <TelemetryChart AriaLabel="@($"{_detail.Name} time series")" Color="#78a9ff" Values="@_series.Select(_point => _point.Value).ToArray()"
                                             Timestamps="@_series.Select(_point => _point.TimestampUtc.ToUnixTimeMilliseconds()).ToArray()" FromUtc="_fromUtc" ToUtc="_toUtc" />
-                            <p>@_series.Count.ToString("N0") samples · Latest value <strong>@_series[^1].Value @_detail.Unit</strong></p>
+                            <p>
+                                @if (_metricSeriesTruncated)
+                                {
+                                    <span>Showing the latest @_series.Count.ToString("N0") samples</span>
+                                }
+                                else
+                                {
+                                    <span>@_series.Count.ToString("N0") samples</span>
+                                }
+                                <span> · Latest value <strong>@_series[^1].Value @_detail.Unit</strong></span>
+                            </p>
                         }
                         @if (!string.IsNullOrWhiteSpace(_detail.ServiceInstanceId) || _detail.AttributesJson != "{}")
                         {

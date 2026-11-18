@@ -39,7 +39,25 @@ public static class MetricExtensions
 
     public static async Task<IReadOnlyList<MetricSeriesPoint>> GetMetricSeries(this IMediator mediator, string name, string? serviceName, DateTimeOffset fromUtc, CancellationToken cancellationToken, DateTimeOffset? toUtc = null)
     {
-        var result = await mediator.Send(new GetMetricSeriesRequest(name, serviceName, fromUtc, toUtc), cancellationToken);
+        var result = await GetMetricSeries(mediator, new GetMetricSeriesRequest(name, serviceName, fromUtc, toUtc), cancellationToken);
+        return result;
+    }
+
+    internal static async Task<IReadOnlyList<MetricSeriesPoint>> GetMetricSeries(this IMediator _mediator, TelemetryItem _sample,
+        DateTimeOffset _fromUtc, DateTimeOffset _toUtc, int _maximumPoints, CancellationToken _cancellationToken)
+    {
+        var _request = new GetMetricSeriesRequest(_sample.Name, _sample.ServiceName, _fromUtc, _toUtc)
+        {
+            Sample = _sample,
+            MaximumPoints = _maximumPoints
+        };
+        var _result = await GetMetricSeries(_mediator, _request, _cancellationToken);
+        return _result;
+    }
+
+    private static async Task<IReadOnlyList<MetricSeriesPoint>> GetMetricSeries(IMediator mediator, GetMetricSeriesRequest request, CancellationToken cancellationToken)
+    {
+        var result = await mediator.Send(request, cancellationToken);
         if (result.HasError)
         {
             throw new InvalidOperationException(result.BrokenRules[0].Message);

@@ -78,6 +78,36 @@ public sealed partial class TelemetryCqrsTests
     }
 
     [Fact]
+    public async Task SelectedMetricSeriesIsFilteredBeforeTakingNewestPoints()
+    {
+        var _from = new DateTimeOffset(2026, 9, 22, 8, 0, 0, TimeSpan.Zero);
+        const string _name = "worker.memory";
+        const string _attributes = "{\"mode\":\"active\",\"pool\":\"managed\"}";
+        var _sample = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(1), 1, _attributes: _attributes);
+        var _middle = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(2), 2, _attributes: "{\"pool\":\"managed\",\"mode\":\"active\"}");
+        var _latest = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(3), 3, _attributes: _attributes);
+        var _outsidePeriod = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(9), 9, _attributes: _attributes);
+        foreach (var _item in new[] { _sample, _middle, _latest, _outsidePeriod })
+        {
+            _item.ScopeName = "Worker.Runtime";
+        }
+
+        var _otherResource = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(4), 4, "replica-b", _attributes);
+        _otherResource.ScopeName = _sample.ScopeName;
+        var _otherAttributes = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(5), 5);
+        _otherAttributes.ScopeName = _sample.ScopeName;
+        var _otherScope = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(6), 6, _attributes: _attributes);
+        _otherScope.ScopeName = "Worker.Extension";
+        var _otherUnit = ProcessMetricSeriesTests.Item(_name, _from.AddSeconds(7), 7, _attributes: _attributes, _unit: "bits");
+        _otherUnit.ScopeName = _sample.ScopeName;
+        await _mediator.Store([_sample, _middle, _latest, _outsidePeriod, _otherResource, _otherAttributes, _otherScope, _otherUnit], CancellationToken.None);
+
+        var _series = await _mediator.GetMetricSeries(_sample, _from, _from.AddSeconds(8), 2, CancellationToken.None);
+
+        Assert.Equal(new[] { new MetricSeriesPoint(_middle.TimestampUtc, 2), new MetricSeriesPoint(_latest.TimestampUtc, 3) }, _series);
+    }
+
+    [Fact]
     public async Task ResourceChartsFollowApplicationChangesAndClearWhenMetricsAreMissing()
     {
         var _from = DateTimeOffset.Parse("2026-10-12T10:00:00Z");
