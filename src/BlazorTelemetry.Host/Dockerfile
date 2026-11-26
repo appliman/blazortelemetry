@@ -18,7 +18,7 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0.100-resolute AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade libbrotli1 libc-bin libc-gconv-modules-extra libc6 libpcre2-8-0 perl-base \
+    && apt-get install -y --no-install-recommends --only-upgrade libbrotli1 libc-bin libc-gconv-modules-extra libc6 libexpat1 libpcre2-8-0 perl-base \
     && rm -f /usr/bin/pebble \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
