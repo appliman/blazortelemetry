@@ -277,14 +277,13 @@ The solution is split into focused projects:
 
 | Project | Responsibility |
 | --- | --- |
-| `BlazorTelemetry.Core` | Domain model, options, and storage contracts |
-| `BlazorTelemetry.Sqlite` | EF Core context, migrations, and SQLite repository |
-| `BlazorTelemetry.AspNetCore` | OTLP endpoints and background services |
-| `BlazorTelemetry` | Razor components and dashboard interface |
-| `BlazorTelemetry.Host` | Standalone application secured by passwordless TOTP authentication |
-| `BlazorTelemetry.Demo` | Embedded dashboard demonstration |
+| `BlazorTelemetry.Host` | Standalone application with OTLP endpoints and background services in `Collector/`, Blazor dashboard UI in `Components/`, and collector options and query models in `Core/` |
+| `BlazorTelemetry.Sqlite` | EF Core context, migrations, and SQLite persistence; shared telemetry models and normalization in `Core/` |
+| `BlazorTelemetryClient` | NuGet package for OpenTelemetry instrumentation and OTLP export from ASP.NET Core and Blazor applications |
+| `BlazorTelemetryClient.ChannelMediator` | Optional NuGet package that adds ChannelMediator handler tracing and metrics |
+| `BlazorTelemetry.Demo` | Instrumented Blazor sample application that exports telemetry to the collector |
 | `BlazorTelemetry.Demo.Api` | Instrumented API producing logs, traces, and metrics |
-| `BlazorTelemetry.Tests` | OTLP parser and persistence tests |
+| `BlazorTelemetry.Tests` | Unit and integration tests for the host, SQLite storage, and client instrumentation |
 
 ## Current scope
 

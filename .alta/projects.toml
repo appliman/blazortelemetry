@@ -1,0 +1,43 @@
+# The projects of this repository for CodeAlta: each [projects.<key>] is a folder that is a project of its own.
+# Edit it with `alta project manifest`, or in CodeAlta Desktop with Sub-projects… in the menu of the repository.
+
+[labels.platform]
+name = "Platform"
+
+[labels.instrumentation]
+name = "Instrumentation"
+
+[labels.examples]
+name = "Examples"
+
+[projects.host]
+path = "src/BlazorTelemetry.Host"
+name = "BlazorTelemetry Host"
+description = "Deployable dashboard, OTLP collector, and alerting."
+labels = ["platform"]
+
+[projects.sqlite]
+path = "src/BlazorTelemetry.Sqlite"
+name = "SQLite Storage"
+description = "Telemetry persistence, queries, and migrations."
+labels = ["platform"]
+
+[projects.client]
+path = "src/BlazorTelemetryClient"
+name = "BlazorTelemetry Client"
+description = "OpenTelemetry instrumentation package for ASP.NET Core and Blazor."
+labels = ["instrumentation"]
+
+[projects.channelmediator]
+path = "src/BlazorTelemetryClient.ChannelMediator"
+name = "ChannelMediator Integration"
+description = "Tracing and metrics for ChannelMediator handlers."
+labels = ["instrumentation"]
+optional = true
+
+[projects.demo]
+path = "src/BlazorTelemetry.Demo"
+name = "Dashboard Demo"
+description = "Instrumented Blazor sample application that exports telemetry to the collector."
+labels = ["examples"]
+optional = true
