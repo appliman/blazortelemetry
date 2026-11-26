@@ -38,6 +38,6 @@ optional = true
 [projects.demo]
 path = "src/BlazorTelemetry.Demo"
 name = "Dashboard Demo"
-description = "Runnable example of the embedded BlazorTelemetry dashboard."
+description = "Instrumented Blazor sample application that exports telemetry to the collector."
 labels = ["examples"]
 optional = true
